@@ -26,10 +26,28 @@
 - Python 3.11+（推荐 [uv](https://docs.astral.sh/uv/)）
 - 无需联网（本地分析；下载职业 .dem 时需要网络）
 
+## 在另一台电脑上部署（clone 后运行）
+
+```bash
+# 拉取代码（二选一）
+git clone git@github.com:huxingyu881225-netizen/dota2-planner.git
+# 或 HTTPS：git clone https://github.com/huxingyu881225-netizen/dota2-planner.git
+
+cd dota2-planner
+uv sync                          # 安装依赖（含 gem-dota、fastapi、pyobjc）
+dota demo                        # 离线造一份演示数据（无需 .dem / 联网）
+dota list                        # 确认数据已写入
+dota coach --hero juggernaut --position carry --minutes 10 --interval 30   # 终端/浮窗给建议
+dota serve                       # 打开建议编辑界面 http://localhost:17373
+```
+
+> 说明：仓库不含 `.venv`（已 gitignore），clone 后必须在本机执行 `uv sync` 重建环境；
+> `pyobjc` 只在 macOS 上安装（浮窗用），无 GUI 时 coach 自动降级为终端模式。
+
 ## 快速开始
 
 ```bash
-cd dota2-assistant
+cd dota2-planner
 uv sync                        # 安装依赖（含 gem-dota）
 
 # 离线体验（无需 .dem/联网）
@@ -67,6 +85,14 @@ docs/DESIGN.md   完整设计方案
 ```bash
 PYTHONPATH=src uv run pytest -q
 ```
+
+## 常见问题
+
+- **`dota/uv` 命令找不到**：先 `uv sync`；若 `uv` 未装，用 `pip install uv` 或直接用
+  `python -m dota_assistant ...` 替代 `dota ...`。
+- **coach 没显示建议**：先用 `dota demo` 写入演示数据，或 `dota ingest <xxx.dem>` 灌入参考库；
+  若 DB 里某英雄/位置没数据，coach/diff 会提示自动跳过。
+- **浮窗没出来**：`--gui` 需要 macOS + pyobjc；否则会提示降级为终端。
 
 ## 已知边界
 

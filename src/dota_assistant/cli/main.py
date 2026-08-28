@@ -50,6 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     df.add_argument("--minutes", type=int, default=10)
     df.add_argument("--interval", type=int, default=30)
     df.add_argument("--result", choices=["win", "loss"], default=None)
+    df.add_argument("--no-llm", dest="use_llm", action="store_false", default=True,
+                    help="强制不用 LLM 判定（模板/规则）")
 
     sub.add_parser("serve", help="启动建议编辑 Web UI")
     sub.add_parser("list", help="列出数据库中的英雄/位置组合与条数")

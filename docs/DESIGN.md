@@ -208,7 +208,9 @@ CREATE INDEX IF NOT EXISTS idx_advice_hero_pos   ON advice(hero, position);
    - 偏差项（deviation）：如“CS 比参考低 12”“本该 2 分钟打野却还在线上”“没有在第 5 分钟买眼”。
    - 对每个偏差，结合该盘最终 `result`（win/loss）判断“偏离 → 好结果 or 坏结果”：
      - 简单的相关性启发式：偏差方向 + 该盘相对参考的胜负/经济差。
-     - 设计上把“好坏判定”做成**可替换策略**（`OutcomeJudger`），默认用规则；LLM 能力（读 `DOTA_LLM_API_KEY`）已用于**核心策略生成**（见 6.1），后续可再扩展到好坏判定的自然语言分析。
+     - 设计上把“好坏判定”做成**可替换策略**（`OutcomeJudger`），默认用规则；配置 `DOTA_LLM_API_KEY` 时，
+       `llm/judger.py` 会把偏差列表发给 LLM，逐条覆盖 outcome 并补一句人话解释（解析失败自动保留规则结果）。
+       核心策略生成同样走 LLM（见 6.1），未配置 key 时两者都自动回退本地实现，完全离线可用。
    - 输出结构化 `DiffReport`（偏差列表 + 每条好/坏 + 汇总建议），并可选写入一个 `reports` 表（设计里先落 JSON 文件 `data/reports/`）。
 
 ### 6.4 编辑界面（需求 4）——`ui/`
@@ -257,7 +259,7 @@ dota list                             # 列出库里已有的 英雄/位置/条�
 ## 9. 扩展点 / 后续
 
 - **GSI 实时对齐**（借鉴 dota-ai-coach）：接入 Dota 2 Game State Integration，自动感知当前英雄/位置/游戏时间。
-- **LLM 好坏判定**：核心策略生成已用 LLM（可选）；后续可把 `OutcomeJudger` 也换成 LLM，给人话的“坏偏差为什么”分析。
+- **LLM 好坏判定**：核心策略生成与 diff 好坏判定均已用 LLM（可选，无 key 回退规则/模板）。
 - **行为结构化**：将叙述升级为带 `action_type` 的结构（对线/游走/打野/控图/团战/买眼）。
 - **批量灌库**：批量灌同英雄/位置的职业 `.dem`，聚合出参考库。
 

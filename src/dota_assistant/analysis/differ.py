@@ -4,6 +4,9 @@ Compares one replay's sampled behavior against the DB reference for the same
 (hero, position) and judges whether deviations led to good or bad outcomes.
 
 If the DB has no samples for (hero, position), returns a skipped report.
+
+好坏判定：先走规则（OutcomeJudger），若配置了 DOTA_LLM_API_KEY 且 use_llm=True，
+再用 LLM 覆盖每条偏差的 outcome 并补一句人话解释；无 key 时保持规则结果。
 """
 from __future__ import annotations
 
@@ -39,10 +42,12 @@ class OutcomeJudger:
 
 
 class Differ:
-    def __init__(self, repo: Repo, judger: Optional[OutcomeJudger] = None, tolerance_pct: float = 0.2):
+    def __init__(self, repo: Repo, judger: Optional[OutcomeJudger] = None, tolerance_pct: float = 0.2,
+                 use_llm: bool = True):
         self.repo = repo
         self.judger = judger or OutcomeJudger()
         self.tolerance = tolerance_pct
+        self.use_llm = use_llm
 
     def _reference_bounds(self, hero: str, position: str) -> Optional[dict[int, dict[str, Any]]]:
         """Aggregate DB samples into per-minute reference (mean + stdev)."""
@@ -108,6 +113,11 @@ class Differ:
                         report.deviations.append(d)
 
         report.summary = self._summary(report, ref)
+        if self.use_llm:
+            from dota_assistant.llm.judger import enrich_with_llm
+            enrich_with_llm(report.deviations, hero, position, match_result)
+            # LLM 可能更改 outcome，重新生成 summary
+            report.summary = self._summary(report, ref)
         return report
 
     # -- helpers --

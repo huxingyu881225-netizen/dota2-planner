@@ -51,6 +51,15 @@ dota ingest ./pro.dem --hero juggernaut --position carry --no-llm
 > 每个窗口的原始指标仍会随样本一起落库（`samples.extra`/各数值列），
 > 供赛后 diff（需求 3）对比用；`samples.behavior` 存的是 LLM 提炼出的核心策略文本。
 
+**赛后 diff 的好坏判定同样可用 LLM（可选）**：配置了 `DOTA_LLM_API_KEY` 时，
+`dota diff` 会把偏差列表交给 LLM，逐条给出「好/坏/中性 + 一句人话解释」；
+未配置或调用失败时自动回退规则判定，离线可用。
+
+```bash
+dota diff ./my.dem --hero juggernaut --position carry --result loss   # 自动：有key用LLM
+dota diff ./my.dem --hero juggernaut --position carry --no-llm        # 强制规则
+```
+
 ## 在另一台电脑上部署（clone 后运行）
 
 ```bash

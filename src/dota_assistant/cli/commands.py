@@ -115,7 +115,7 @@ def cmd_diff(args):
 
     conn = connect()
     init_schema(conn)
-    differ = Differ(Repo(conn), OutcomeJudger())
+    differ = Differ(Repo(conn), OutcomeJudger(), use_llm=getattr(args, "use_llm", True))
     report = differ.compare(samples, args.hero, position, match_result=args.result)
 
     if report.skipped:

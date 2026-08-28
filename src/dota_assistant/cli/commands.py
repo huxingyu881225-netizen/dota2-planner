@@ -25,6 +25,7 @@ def cmd_ingest(args):
         minute_n=args.minutes,
         interval_m=args.interval,
         result=args.result,
+        use_llm=getattr(args, "use_llm", None),
     )
     print(f"已入库: match_ref={mr}，写入样本 {inserted} 条 "
           f"({args.hero}/{position}, 前{args.minutes}分钟×每{args.interval}秒)")

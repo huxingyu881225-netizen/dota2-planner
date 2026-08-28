@@ -84,97 +84,6 @@ def _items_in_window(purchase_log, lower_sec: int, upper_sec: int) -> list[str]:
     return items
 
 
-def _int(v) -> Any:
-    if v is None:
-        return None
-    try:
-        return int(round(v))
-    except (TypeError, ValueError):
-        return None
-
-
-def extract(
-    data: dict[str, Any],
-    hero: str,
-    position: str,
-    minute_n: int,
-    interval_m: int,
-) -> list[Sample]:
-    """采样前 N 分钟、每 M 秒的玩家行为。`data` 为 GemSource.fetch 返回。"""
-    player = data.get("player")
-    if player is None:
-        return []
-
-    tmax = minute_n * 60
-    series = _series(player)
-
-    kills_log = list(getattr(player, "kills_log", None) or [])
-    obs_log = list(getattr(player, "obs_log", None) or [])
-    sen_log = list(getattr(player, "sen_log", None) or [])
-    purchase_log = list(getattr(player, "purchase_log", None) or [])
-    position_log = list(getattr(player, "position_log", None) or [])
-
-    kills_total = int(getattr(player, "kills", 0) or 0)
-    deaths = int(getattr(player, "deaths", 0) or 0)
-    assists = int(getattr(player, "assists", 0) or 0)
-
-    samples: list[Sample] = []
-    t = 0
-    while t <= tmax:
-        prev_gold = _at(series["gold"], max(0, t - interval_m))
-        cur_gold = _at(series["gold"], t)
-        window_gain = (cur_gold - prev_gold) if (prev_gold is not None and cur_gold is not None and cur_gold >= prev_gold) else 0.0
-
-        metrics: dict[str, Any] = {
-            "t_sec": t,
-            "cs": _int(_at(series["lh"], t)),
-            "gpm": _int(_at(series["earned"], t)),
-            "networth": _int(_at(series["nw"], t)),
-            "gold": _int(cur_gold),
-            "xp": _int(_at(series["xp"], t)),
-            "dn": _int(_at(series["dn"], t)),
-            "window_gain": _int(window_gain),
-            "window_interval": interval_m,
-            "kills_total": kills_total,
-            "deaths": deaths,
-            "assists": assists,
-            "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t),
-            "obs_bought": _count_ward(obs_log, t),
-            "sen_bought": _count_ward(sen_log, t),
-        }
-
-        new_items = _items_in_window(purchase_log, t - interval_m, t)
-        if new_items:
-            metrics["items_bought"] = new_items[:4]
-
-        pos_x, pos_y = _position_at(position_log, t)
-        if pos_x is not None:
-            metrics["pos_x"], metrics["pos_y"] = pos_x, pos_y
-
-        behavior = build_behavior(metrics, position)
-        samples.append(
-            Sample(
-                hero=hero,
-                position=position,
-                t_sec=int(t),
-                t_min=round(t / 60.0, 2),
-                behavior=behavior,
-                cs=metrics.get("cs"),
-                gpm=metrics.get("gpm"),
-                xpm=metrics.get("xp"),
-                networth=metrics.get("networth"),
-                kills=kills_total,
-                deaths=deaths,
-                pos_x=pos_x,
-                pos_y=pos_y,
-                extra=metrics,
-            )
-        )
-        t += interval_m
-
-    return samples
-
-
 def _count_ward(log, t_sec: int) -> int:
     """统计 WardEvent（obs_log/sen_log）中 <= t_sec 秒的插眼数。"""
     cnt = 0
@@ -195,3 +104,112 @@ def _position_at(position_log, t_sec: int):
         else:
             break
     return best
+
+
+def _int(v) -> Any:
+    if v is None:
+        return None
+    try:
+        return int(round(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_windows(
+    data: dict[str, Any],
+    minute_n: int,
+    interval_m: int,
+) -> list[dict[str, Any]]:
+    """按前 N 分钟、每 M 秒，输出每个窗口的结构化指标字典。
+
+    每个窗口的 key：t_sec, t_min, window_interval, cs, gpm(earned), networth,
+    gold, xp, dn, window_gain, kills_total, deaths, assists, kills_in_window,
+    obs_bought, sen_bought, items_bought[]（可选）, pos_x/pos_y（可选）。
+    供 LLM 生成「核心策略」文本。
+    """
+    player = data.get("player")
+    if player is None:
+        return []
+
+    tmax = minute_n * 60
+    series = _series(player)
+    kills_log = list(getattr(player, "kills_log", None) or [])
+    obs_log = list(getattr(player, "obs_log", None) or [])
+    sen_log = list(getattr(player, "sen_log", None) or [])
+    purchase_log = list(getattr(player, "purchase_log", None) or [])
+    position_log = list(getattr(player, "position_log", None) or [])
+    kills_total = int(getattr(player, "kills", 0) or 0)
+    deaths = int(getattr(player, "deaths", 0) or 0)
+    assists = int(getattr(player, "assists", 0) or 0)
+
+    windows: list[dict[str, Any]] = []
+    t = 0
+    while t <= tmax:
+        prev_gold = _at(series["gold"], max(0, t - interval_m))
+        cur_gold = _at(series["gold"], t)
+        window_gain = (cur_gold - prev_gold) if (prev_gold is not None and cur_gold is not None and cur_gold >= prev_gold) else 0.0
+
+        metrics: dict[str, Any] = {
+            "t_sec": t,
+            "t_min": round(t / 60.0, 2),
+            "window_interval": interval_m,
+            "cs": _int(_at(series["lh"], t)),
+            "gpm": _int(_at(series["earned"], t)),
+            "networth": _int(_at(series["nw"], t)),
+            "gold": _int(cur_gold),
+            "xp": _int(_at(series["xp"], t)),
+            "dn": _int(_at(series["dn"], t)),
+            "window_gain": _int(window_gain),
+            "kills_total": kills_total,
+            "deaths": deaths,
+            "assists": assists,
+            "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t),
+            "obs_bought": _count_ward(obs_log, t),
+            "sen_bought": _count_ward(sen_log, t),
+        }
+        new_items = _items_in_window(purchase_log, t - interval_m, t)
+        if new_items:
+            metrics["items_bought"] = new_items[:4]
+        pos_x, pos_y = _position_at(position_log, t)
+        if pos_x is not None:
+            metrics["pos_x"], metrics["pos_y"] = pos_x, pos_y
+        windows.append(metrics)
+        t += interval_m
+    return windows
+
+
+def extract(
+    data: dict[str, Any],
+    hero: str,
+    position: str,
+    minute_n: int,
+    interval_m: int,
+) -> list[Sample]:
+    """采样前 N 分钟、每 M 秒的玩家行为（behavior 用模板生成，供无 LLM 或 diff 场景用）。
+
+    有 LLM 时，ingester 会改用 extract_windows 的指标交给 LLM 生成策略文本。
+    """
+    samples: list[Sample] = []
+    for metrics in extract_windows(data, minute_n, interval_m):
+        behavior = build_behavior(metrics, position)
+        pos_x = metrics.get("pos_x")
+        pos_y = metrics.get("pos_y")
+        samples.append(
+            Sample(
+                hero=hero,
+                position=position,
+                t_sec=int(metrics["t_sec"]),
+                t_min=metrics["t_min"],
+                behavior=behavior,
+                cs=metrics.get("cs"),
+                gpm=metrics.get("gpm"),
+                xpm=metrics.get("xp"),
+                networth=metrics.get("networth"),
+                kills=metrics.get("kills_total"),
+                deaths=metrics.get("deaths"),
+                pos_x=pos_x,
+                pos_y=pos_y,
+                extra=metrics,
+            )
+        )
+    return samples

@@ -28,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("--minutes", type=int, default=10, help="前 N 分钟")
     ing.add_argument("--interval", type=int, default=30, help="间隔 M 秒")
     ing.add_argument("--result", choices=["win", "loss"], default=None)
+    llm_grp = ing.add_mutually_exclusive_group()
+    llm_grp.add_argument("--llm", dest="use_llm", action="store_true", default=None,
+                         help="强制用 LLM 生成策略（需 DOTA_LLM_API_KEY）")
+    llm_grp.add_argument("--no-llm", dest="use_llm", action="store_false",
+                         help="强制不用 LLM（模板生成）")
 
     demo = sub.add_parser("demo", help="离线写入一份演示参考数据（无需 _dem / 联网）")
 

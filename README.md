@@ -13,7 +13,7 @@
 
 | 需求 | 命令 | 说明 |
 |------|------|------|
-| 1 灌录相行为入库 | `dota ingest pro.dem --hero H --position P [--minutes N --interval M]` | 本地解析 .dem，把该英雄前 N 分钟、每 M 秒的主要行为写入 SQLite |
+| 1 灌录相行为入库 | `dota ingest pro.dem --hero H --position P [--minutes N --interval M] [--llm]` | 本地解析 .dem，把该英雄前 N 分钟、每 M 秒的 **核心策略**（LLM 或模板）写入 SQLite |
 | 2 浮窗实时给建议 | `dota coach --hero H --position P --minutes N --interval M [--gui]` | 每 M 秒查 DB 对应时间段建议；macOS NSPanel 浮窗或终端显示 |
 | 3 赛后对比+好坏判定 | `dota diff my.dem --hero H --position P [--result win\|loss]` | 对比本局行为与 DB 参考，指出偏差并判好坏；DB 无该英雄/位置则跳过 |
 | 4 编辑建议界面 | `dota serve` | 浏览器打开 `http://localhost:17373` 修改某英雄/位置/时间段的建议 |
@@ -25,6 +25,31 @@
 - macOS（浮窗用 pyobjc；无 GUI 自动降级终端）
 - Python 3.11+（推荐 [uv](https://docs.astral.sh/uv/)）
 - 无需联网（本地分析；下载职业 .dem 时需要网络）
+
+## 核心策略生成（LLM，可选）
+
+灌入录像时，落库的是**每个时间段（默认 30 秒）的英雄核心策略**，而不是每秒流水账：
+由 LLM 根据该窗口的补刀/经济/击杀/插眼/装备等指标，提炼成一句职业教练口吻的策略文本。
+
+- 默认走 **OpenRouter**（OpenAI 兼容接口），支持自配 `base_url` 换任意网关。
+- **不配 key 也能跑**：没有 `DOTA_LLM_API_KEY` 时自动回退本地模板生成，完全离线。
+
+```bash
+# 方式 A：不开 LLM（离线，模板生成策略）
+dota ingest ./pro.dem --hero juggernaut --position carry --minutes 10 --interval 30
+
+# 方式 B：开 LLM（需先配好环境变量）
+export DOTA_LLM_API_KEY=sk-or-xxxx                # OpenRouter 等 key
+export DOTA_LLM_BASE_URL=https://openrouter.ai/api/v1   # 可选，默认即此
+export DOTA_LLM_MODEL=openrouter/auto             # 可选，默认 openrouter/auto
+dota ingest ./pro.dem --hero juggernaut --position carry --minutes 10 --interval 30 --llm
+
+# 或强制不开 LLM 灌一批
+dota ingest ./pro.dem --hero juggernaut --position carry --no-llm
+```
+
+> 每个窗口的原始指标仍会随样本一起落库（`samples.extra`/各数值列），
+> 供赛后 diff（需求 3）对比用；`samples.behavior` 存的是 LLM 提炼出的核心策略文本。
 
 ## 在另一台电脑上部署（clone 后运行）
 

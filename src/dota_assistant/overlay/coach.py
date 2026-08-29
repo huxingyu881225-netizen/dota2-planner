@@ -137,6 +137,12 @@ class Coach:
             # 库中存在 (hero, position) -> 按游戏时间提 advice
             if m > minute_n:
                 break
+            # 一旦开始出建议，浮窗切到鼠标穿透模式（不挡游戏操作）
+            start_mode = getattr(self.display, "start_advice_mode", None)
+            if not getattr(self, "_advice_started", False):
+                self._advice_started = True
+                if start_mode is not None:
+                    start_mode()
             hits = self.repo.lookup_advice_at(cur_hero, resolved_pos, m)
             if hits:
                 txt = hits[0]["advice"]

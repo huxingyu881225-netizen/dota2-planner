@@ -77,3 +77,18 @@ def test_gsi_clock_requires_in_game():
     st.update({"map": {"game_time": 120.0, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
                "hero": {"info": {"name": "npc_dota_hero_pudge"}}, "player": {"team": 2}})
     assert clock.minute() == 2.0
+
+
+def test_clock_time_preferred():
+    """GSI 时间优先用 map.clock_time，缺失时回退 game_time。"""
+    st = GsiState()
+    st.update({"map": {"clock_time": 90.0, "game_time": 60.0,
+                       "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+               "hero": {"info": {"name": "npc_dota_hero_axe"}}, "player": {"team": 2}})
+    assert st.game_time == 90.0  # clock_time 优先
+
+    st2 = GsiState()
+    st2.update({"map": {"game_time": 45.0,
+                        "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+                "hero": {"info": {"name": "npc_dota_hero_axe"}}, "player": {"team": 2}})
+    assert st2.game_time == 45.0  # 无 clock_time 回退 game_time

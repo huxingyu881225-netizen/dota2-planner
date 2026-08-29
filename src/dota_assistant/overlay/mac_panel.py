@@ -48,17 +48,44 @@ class MacOverlay:
         self._advice_label = None
         self._clicked_start = threading.Event()
         self._button_target = None
+        self._mouse_passthrough = False      # 是否鼠标穿透（开始出建议后 True，不挡游戏操作）
+        self._shown_hero = None              # 已显示过的英雄（去重）
+        self._hidden = False                 # F9 隐藏状态
+        self._key_monitor = None             # NSEvent 全局热键监听
 
     # ---------- UI 更新（任意线程可调用） ----------
     def set_hero_from_gsi(self, hero: str):
         if hero:
-            self._main(lambda: self._set_hero_text(hero))
+            self._main(lambda: self._sync_display_hero(hero))
+
+    def start_advice_mode(self):
+        """进入出建议模式：鼠标穿透（不挡操作）。"""
+        self._enable_mouse(True)
+
+    def _enable_mouse(self, passthrough: bool):
+        """设置鼠标是否穿透。passthrough=True 时不挡游戏操作；False 时恢复交互。"""
+        def set_(flag: bool):
+            if self._panel is not None:
+                self._panel.setIgnoresMouseEvents_(flag)
+                self._mouse_passthrough = flag
+        if self._panel is not None:
+            self._main(lambda: set_(passthrough))
+
+    def _sync_display_hero(self, hero: str):
+        """去重显示英雄：只在该英雄变化时才更新浮窗文本（避免一直刷“等待 GSI”）。"""
+        if hero != self._shown_hero:
+            self._shown_hero = hero
+            self._set_hero_text(hero)
 
     def selected_position(self) -> Optional[str]:
         return self._pos_popup.titleOfSelectedItem() if self._pos_popup else None
 
     def ask_position(self, hero: str, options: list[str]) -> Optional[str]:
-        """让用户在浮窗下拉里选位置（阻塞直到选择）。返回所选或 None。"""
+        """让用户在浮窗下拉里选位置（阻塞直到选择）。返回所选或 None。
+
+        等待期间恢复鼠标交互（setIgnoresMouseEvents_(False)），让用户能点下拉/开始按钮。
+        """
+        self._enable_mouse(False)  # 恢复交互
         self._main(lambda: self._load_positions(options))
         self._clicked_start.clear()
         self._main(lambda: self._set_status_text(f"英雄 {hero} 有多个位置，请选择后点「开始」"))
@@ -166,8 +193,37 @@ class MacOverlay:
 
     # ---------- 事件循环 / 关闭 ----------
     def run(self):
-        """阻塞运行 AppKit 事件循环（须在主线程调用）。"""
+        """阻塞运行 AppKit 事件循环（须在主线程调用）。注册 F9 隐藏/显示热键。"""
+        self._register_hotkey()
         AppKit.NSApplication.sharedApplication().run()
+
+    def _register_hotkey(self):
+        """监听 F9（keyCode=97）/ Fn+F9 切换浮窗隐藏/显示。需辅助功能权限。"""
+        from AppKit import NSEvent, NSKeyDownMask, NSFunctionKeyMask
+        key_code = 97  # F9
+
+        def handler(ev):
+            try:
+                if ev.keyCode() == key_code:
+                    # 检测 Fn（NSFunctionKeyMask = 1<<23）或纯 F9 都算
+                    self._main(self.toggle_visible)
+            except Exception:
+                pass
+            return ev
+
+        self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSKeyDownMask, handler)
+
+    def toggle_visible(self):
+        """F9：隐藏/显示浮窗。"""
+        if self._panel is None:
+            return
+        if self._hidden:
+            self._panel.orderFrontRegardless()
+            self._hidden = False
+        else:
+            self._panel.orderOut_(None)
+            self._hidden = True
 
     def stop_app(self):
         AppKit.NSApplication.sharedApplication().stop_(None)
@@ -179,6 +235,8 @@ class MacOverlay:
     # ---------- 内部 ----------
     def _on_start(self):
         self._clicked_start.set()
+        # 开始出建议后：鼠标穿透，浮窗不再挡游戏操作
+        self.start_advice_mode()
 
     def _set_hero_text(self, hero: str):
         if self._hero_label is not None:

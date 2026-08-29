@@ -5,7 +5,8 @@ Dota 2 通过 gamestate_integration_*.cfg 把游戏状态以 JSON POST 到本地
 “从游戏开始自动计时”的时钟，以及自动识别英雄名。
 
 参考字段（dota-ai-coach 同款思路）：
-    map.game_time        —— 游戏时间（秒，游戏开始时从 0 计）
+    map.clock_time       —— 游戏时钟时间（秒，游戏开始时从 0 计，比 game_time 更精确）
+    map.game_time        —— 兜底用（部分版本/时刻只有 game_time）
     map.game_state       —— DOTA_GAMERULES_STATE_*；GAME_IN_PROGRESS 表示对局中
     hero.info.name       —— 本地玩家英雄 NPC 名，如 npc_dota_hero_juggernaut
     player.team          —— 本地玩家队伍
@@ -37,7 +38,8 @@ class GsiState:
         with self._lock:
             m = data.get("map") or {}
             try:
-                self._game_time = float(m.get("game_time", 0) or 0)
+                # 优先用更精确的 clock_time；缺失时回退 game_time
+                self._game_time = float(m.get("clock_time", m.get("game_time", 0)) or 0)
             except (TypeError, ValueError):
                 self._game_time = 0.0
             self._game_state = str(m.get("game_state", "") or "")

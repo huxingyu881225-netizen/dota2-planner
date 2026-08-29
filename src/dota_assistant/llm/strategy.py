@@ -9,7 +9,7 @@
     DOTA_LLM_BASE_URL     —— 默认 https://openrouter.ai/api/v1（兼容 OpenAI 协议）
     DOTA_LLM_MODEL        —— 默认 openrouter/auto（或指定如 openai/gpt-4o-mini）
     DOTA_LLM_CONCURRENCY  —— 批量并发数，默认 4
-    DOTA_LLM_MAX_TOKENS   —— 单窗口生成最大 token，默认 500（过小如 120 会导致
+    DOTA_LLM_MAX_TOKENS   —— 单窗口生成最大 token，默认 1000（过小如 120 会导致
                              部分模型只输出 reasoning、content 为空）
     DOTA_LLM_REASONING_EFFORT —— 推理强度，默认 high（OpenAI 兼容的 reasoning 模型用）
 """
@@ -27,23 +27,42 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "openrouter/auto"
 
 SYSTEM_PROMPT = """你是资深 Dota 2 教练。给你一名玩家在某个游戏时间段内的结构化比赛数据，
-请用一句（最多两句）中文概括他在这个时间段里的【核心策略】——不是流水账地复述数据，
-而是提炼他的意图：他此刻在按什么思路打（对线压制/稳健发育/主动游走/控图/推塔/保人/买眼控视野/
-围绕某个关键节奏点等），以及这个策略服务于什么目的。
+请输出一条【advice】，必须包含两部分信息：
+1. 核心策略：当前时间段该英雄/位置应该怎么打（对线压制/稳健发育/主动游走/控图/推塔/保人/
+   买眼控视野/围绕某个关键节奏点等，服务于什么目的）。
+2. 装备/补给/视野建议：当前已有装备如何服务该策略，下一步该补什么。
 
-要求：
-- 直接输出策略文本，不要任何解释、前缀或 Markdown。
-- 基于数据推断，数据不足就写"稳健发育/待机"，不要编造。
-- 语气像职业教练给选手的指令，简短、可执行。"""
+约束：
+1. 直接输出 advice 文本，不要标题、解释、Markdown，不要"核心策略："等前缀。
+2. 一到三句中文，简短可执行，语气像职业教练给选手的指令。
+3. 如果有装备/补给变化，至少包含一个具体装备/补给/视野动作，例如：魔棒、草鞋、风灵之纹、
+   凝魂之泪、诡计之雾、岗哨守卫、侦查守卫、回城卷轴、血腥榴弹、先灵火、树之祭祀 等。
+4. 如果数据里有 starting_items，前 1 分钟的 advice 必须总结起始装，并解释它们各自用途。
+5. 如果数据里有 items_bought_in_window，只能说"本窗口新增购买 xxx"，不要说"目前只买了…"。
+6. 只有数据里有 items_bought_so_far 时，才可基于它判断"当前已购买/已有装备"。
+7. 数据不足时核心策略可写"稳健发育/待机"，但仍要给出保守的补给或视野建议（如买眼/带TP/带雾）。
+8. 位置描述要准确：offlane_support 统一说"劣势路辅助/四号位"，其搭档说"三号位/劣势路核心"；
+   其它位置照常：carry=一号位/优势路核心，mid=二号位/中路核心，offline=三号位/劣势路核心，
+   safelane_support=五号位/优势路辅助。"""
+
+
+POSITION_CN = {
+    "carry": "一号位/优势路核心",
+    "mid": "二号位/中路核心",
+    "offline": "三号位/劣势路核心",
+    "offlane_support": "劣势路辅助/四号位",
+    "safelane_support": "五号位/优势路辅助",
+}
 
 
 def strategy_prompt(hero: str, position: str, window: dict[str, Any]) -> str:
-    """单窗口 prompt（供批量组装）。"""
+    """单窗口 prompt（供批量组装），position 附带中文映射。"""
+    pos_cn = POSITION_CN.get(position, position)
     return (
-        f"英雄:{hero} 位置:{position} 时间段:{window.get('t_min', '?')}分钟 "
+        f"英雄:{hero} 位置:{position}({pos_cn}) 时间段:{window.get('t_min', '?')}分钟 "
         f"({window.get('t_sec', 0)}s 起, 窗口{window.get('window_interval', 30)}s)\n"
         f"数据: {json.dumps({k: v for k, v in window.items() if k not in ('t_sec', 't_min', 'window_interval')}, ensure_ascii=False)}\n"
-        "核心策略:"
+        "advice:"
     )
 
 
@@ -82,7 +101,7 @@ def generate_strategy_batch(
                     {"role": "user", "content": strategy_prompt(hero, position, item)},
                 ],
                 "temperature": 0.4,
-                "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "500")),
+                "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "1000")),
             }
             reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT")
             if reasoning_effort:

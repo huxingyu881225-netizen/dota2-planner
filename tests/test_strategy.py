@@ -12,7 +12,7 @@ WIN = {"t_sec": 150, "t_min": 2.5, "window_interval": 30, "cs": 22, "gpm": 520,
 
 def test_strategy_prompt_contains_hero_position():
     p = strategy_prompt("juggernaut", "carry", WIN)
-    assert "juggernaut" in p and "carry" in p and "核心策略" in p
+    assert "juggernaut" in p and "carry" in p and "advice:" in p
 
 
 def test_template_fallback_without_key(monkeypatch):
@@ -51,7 +51,7 @@ def test_llm_failure_falls_back_to_template(monkeypatch):
 
 
 def test_llm_max_tokens_and_reasoning(monkeypatch):
-    """默认 max_tokens=500，且 DOTA_LLM_REASONING_EFFORT 会进入请求体。"""
+    """默认 max_tokens=1000，且 DOTA_LLM_REASONING_EFFORT 会进入请求体。"""
     monkeypatch.setenv("DOTA_LLM_API_KEY", "k")
     monkeypatch.setenv("DOTA_LLM_REASONING_EFFORT", "high")
     captured = {}
@@ -67,7 +67,7 @@ def test_llm_max_tokens_and_reasoning(monkeypatch):
     monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", fake_post)
     out = generate_strategy_batch([WIN], "juggernaut", "carry")
     assert out == ["稳发育"]
-    assert captured["body"]["max_tokens"] == 500
+    assert captured["body"]["max_tokens"] == 1000
     assert captured["body"].get("reasoning_effort") == "high"
 
 
@@ -88,3 +88,28 @@ def test_llm_max_tokens_env(monkeypatch):
     monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", fake_post)
     generate_strategy_batch([WIN], "juggernaut", "carry")
     assert captured["body"]["max_tokens"] == 300
+
+
+def test_strategy_prompt_position_chinese(monkeypatch):
+    """strategy_prompt 带位置中文映射，且包含 advice 结尾。"""
+    from dota_assistant.llm.strategy import strategy_prompt, POSITION_CN
+    p = strategy_prompt("axe", "offlane_support", WIN)
+    assert "劣势路辅助/四号位" in p
+    assert "位置:offlane_support(劣势路辅助/四号位)" in p
+    assert p.strip().endswith("advice:")
+    # 中文映射表包含全部5个位置
+    assert POSITION_CN["carry"] == "一号位/优势路核心"
+    assert POSITION_CN["safelane_support"] == "五号位/优势路辅助"
+
+
+def test_system_prompt_has_structure_and_constraints():
+    """SYSTEM_PROMPT 包含两部分结构与关键约束。"""
+    from dota_assistant.llm.strategy import SYSTEM_PROMPT
+    assert "核心策略" in SYSTEM_PROMPT
+    assert "装备/补给/视野建议" in SYSTEM_PROMPT
+    assert "starting_items" in SYSTEM_PROMPT
+    assert "items_bought_in_window" in SYSTEM_PROMPT
+    assert "items_bought_so_far" in SYSTEM_PROMPT
+    assert "offlane_support" in SYSTEM_PROMPT and "劣势路辅助/四号位" in SYSTEM_PROMPT
+    assert "直接输出 advice 文本" in SYSTEM_PROMPT
+    assert "一到三句中文" in SYSTEM_PROMPT

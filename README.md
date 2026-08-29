@@ -42,7 +42,7 @@ dota ingest ./pro.dem --hero juggernaut --position carry --minutes 10 --interval
 export DOTA_LLM_API_KEY=sk-or-xxxx                # OpenRouter 等 key
 export DOTA_LLM_BASE_URL=https://openrouter.ai/api/v1   # 可选，默认即此
 export DOTA_LLM_MODEL=openrouter/auto             # 可选，默认 openrouter/auto
-export DOTA_LLM_MAX_TOKENS=500           # 可选，默认 500（过小会让 reasoning 模型只输出思考、content 为空）
+export DOTA_LLM_MAX_TOKENS=1000          # 可选，默认 1000（过小会让 reasoning 模型只输出思考、content 为空）
 export DOTA_LLM_REASONING_EFFORT=high     # 可选，推理强度 low/medium/high
 dota ingest ./pro.dem --hero juggernaut --position carry --minutes 10 --interval 30 --llm
 

@@ -105,6 +105,36 @@ def _items_in_window(purchase_log, lower_sec: int, upper_sec: int, base_tick: in
     return items
 
 
+def _purchase_items(entries) -> list[tuple[int, str]]:
+    """把 purchase_log 转成 [(游戏秒, 物品名)]，按时间排序。"""
+    out = []
+    for e in (entries or []):
+        tick = getattr(e, "tick", None)
+        if tick is None:
+            continue
+        name = getattr(e, "value_name", None) or getattr(e, "key", None) or ""
+        if name:
+            out.append((tick, str(name).replace("item_", "").replace("_", " ")))
+    return out
+
+
+def _starting_items(purchase_entries, base_tick: int = 0, start_sec: int = 15) -> list[str]:
+    """起始装：游戏开始 ~start_sec 秒内购买的前几件（按时间升序）。"""
+    items = [name for tick, name in sorted(_purchase_items(purchase_entries), key=lambda x: x[0])
+             if _to_sec(tick, base_tick) <= start_sec]
+    return items[:6]
+
+
+def _items_so_far(purchase_entries, t_sec: int, base_tick: int = 0) -> list[str]:
+    """截至 t_sec 的累计已购物品（按时间升序去重）。"""
+    seen, order = set(), []
+    for tick, name in sorted(_purchase_items(purchase_entries), key=lambda x: x[0]):
+        if _to_sec(tick, base_tick) <= t_sec and name not in seen:
+            seen.add(name)
+            order.append(name)
+    return order
+
+
 def _count_ward(log, t_sec: int, base_tick: int = 0) -> int:
     """统计 WardEvent（obs_log/sen_log）中 <= t_sec 游戏秒的插眼数。"""
     cnt = 0
@@ -223,8 +253,10 @@ def extract_windows(
             "sen_bought": _count_ward(sen_log, t, base_tick),
         }
         new_items = _items_in_window(purchase_log, t - interval_m, t, base_tick)
-        if new_items:
-            metrics["items_bought"] = new_items[:4]
+        metrics["items_bought"] = new_items[:4]
+        metrics["items_bought_in_window"] = new_items[:4]
+        metrics["starting_items"] = _starting_items(purchase_log, base_tick)
+        metrics["items_bought_so_far"] = _items_so_far(purchase_log, t, base_tick)
         pos_x, pos_y = _position_at(position_log, t, base_tick)
         if pos_x is not None:
             metrics["pos_x"], metrics["pos_y"] = pos_x, pos_y

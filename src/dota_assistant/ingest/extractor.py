@@ -7,6 +7,10 @@ gem 秒级序列（parallel arrays，采样约 1 次/秒，times[i] = tick 数�
     obs_log / sen_log            -> WardEvent（有 .tick）
     位置                          -> position_log: [(tick, x, y), ...]
 标量：kills / deaths / assists（服务器计分板）
+
+重要：gem-dota 返回的 tick 是 **replay 的绝对 tick**（从录像文件开始计），不是游戏从 0 秒开始的
+tick。因此所有 tick 换算游戏秒都用 `(tick - base_tick) / 30`，base_tick = match.game_start_tick。
+若拿不到 game_start_tick（None/0），退化为原文行为（直接 /30）。
 """
 from __future__ import annotations
 
@@ -18,18 +22,35 @@ from dota_assistant.core.models import Sample
 TICKS_PER_SECOND = 30
 
 
-def _to_sec(tick) -> int:
-    return int(round((tick or 0) / TICKS_PER_SECOND))
+def _resolve_base_tick(data: dict[str, Any]) -> int:
+    """从 data['match'] 取 game_start_tick，作为游戏 0 秒的基准 tick。"""
+    match = data.get("match")
+    if match is None:
+        return 0
+    gt = getattr(match, "game_start_tick", None)
+    try:
+        return int(gt) if gt else 0
+    except (TypeError, ValueError):
+        return 0
 
 
-def _to_series(times, vals) -> list[tuple[int, float]]:
-    """把 (tick, value) 对齐到 (秒, value)，按秒升序。"""
+def _to_sec(tick, base_tick: int = 0) -> int:
+    """绝对 tick -> 游戏内秒：(tick - base_tick) / 30。"""
+    if tick is None:
+        return 0
+    abs_tick = int(tick)
+    game_tick = abs_tick - (base_tick or 0)
+    return int(round(game_tick / TICKS_PER_SECOND))
+
+
+def _to_series(times, vals, base_tick: int = 0) -> list[tuple[int, float]]:
+    """把 (tick, value) 对齐到 (游戏秒, value)，按秒升序。"""
     out = []
     for i in range(min(len(times), len(vals))):
         t, v = times[i], vals[i]
         if v is None:
             continue
-        sec = _to_sec(t)
+        sec = _to_sec(t, base_tick)
         out.append((sec, float(v)))
     out.sort(key=lambda x: x[0])
     return out
@@ -46,24 +67,24 @@ def _at(pairs: list[tuple[int, float]], t_sec: int) -> Any:
     return best
 
 
-def _series(player) -> dict[str, list[tuple[int, float]]]:
+def _series(player, base_tick: int = 0) -> dict[str, list[tuple[int, float]]]:
     times = list(getattr(player, "times", None) or [])
     return {
-        "lh": _to_series(times, getattr(player, "lh_t", None)),
-        "nw": _to_series(times, getattr(player, "net_worth_t", None)),
-        "gold": _to_series(times, getattr(player, "gold_t", None)),
-        "earned": _to_series(times, getattr(player, "total_earned_gold_t", None)),
-        "xp": _to_series(times, getattr(player, "xp_t", None)),
-        "dn": _to_series(times, getattr(player, "dn_t", None)),
+        "lh": _to_series(times, getattr(player, "lh_t", None), base_tick),
+        "nw": _to_series(times, getattr(player, "net_worth_t", None), base_tick),
+        "gold": _to_series(times, getattr(player, "gold_t", None), base_tick),
+        "earned": _to_series(times, getattr(player, "total_earned_gold_t", None), base_tick),
+        "xp": _to_series(times, getattr(player, "xp_t", None), base_tick),
+        "dn": _to_series(times, getattr(player, "dn_t", None), base_tick),
     }
 
 
-def _log_tick_seconds(log, lower_sec: int, upper_sec: int) -> int:
-    """在 (lower, upper] 秒区间内，命中日志的事件数。"""
+def _log_tick_seconds(log, lower_sec: int, upper_sec: int, base_tick: int = 0) -> int:
+    """在 (lower, upper] 游戏秒区间内，命中日志的事件数。"""
     cnt = 0
     for e in (log or []):
         tick = getattr(e, "tick", None)
-        sec = _to_sec(tick) if tick is not None else None
+        sec = _to_sec(tick, base_tick) if tick is not None else None
         if sec is None:
             continue
         if lower_sec < sec <= upper_sec:
@@ -71,35 +92,35 @@ def _log_tick_seconds(log, lower_sec: int, upper_sec: int) -> int:
     return cnt
 
 
-def _items_in_window(purchase_log, lower_sec: int, upper_sec: int) -> list[str]:
+def _items_in_window(purchase_log, lower_sec: int, upper_sec: int, base_tick: int = 0) -> list[str]:
     items = []
     for e in (purchase_log or []):
         tick = getattr(e, "tick", None)
         if tick is None:
             continue
-        sec = _to_sec(tick)
+        sec = _to_sec(tick, base_tick)
         name = getattr(e, "value_name", None) or getattr(e, "key", None) or getattr(e, "value", None) or ""
         if lower_sec < sec <= upper_sec and name:
             items.append(str(name).replace("item_", "").replace("_", " "))
     return items
 
 
-def _count_ward(log, t_sec: int) -> int:
-    """统计 WardEvent（obs_log/sen_log）中 <= t_sec 秒的插眼数。"""
+def _count_ward(log, t_sec: int, base_tick: int = 0) -> int:
+    """统计 WardEvent（obs_log/sen_log）中 <= t_sec 游戏秒的插眼数。"""
     cnt = 0
     for e in (log or []):
         tick = getattr(e, "tick", None)
         if tick is None:
             continue
-        if _to_sec(tick) <= t_sec:
+        if _to_sec(tick, base_tick) <= t_sec:
             cnt += 1
     return cnt
 
 
-def _position_at(position_log, t_sec: int):
+def _position_at(position_log, t_sec: int, base_tick: int = 0):
     best = (None, None)
     for tick, x, y in position_log:
-        if _to_sec(tick) <= t_sec:
+        if _to_sec(tick, base_tick) <= t_sec:
             best = (float(x), float(y))
         else:
             break
@@ -131,8 +152,9 @@ def extract_windows(
     if player is None:
         return []
 
+    base_tick = _resolve_base_tick(data)
     tmax = minute_n * 60
-    series = _series(player)
+    series = _series(player, base_tick)
     kills_log = list(getattr(player, "kills_log", None) or [])
     obs_log = list(getattr(player, "obs_log", None) or [])
     sen_log = list(getattr(player, "sen_log", None) or [])
@@ -163,14 +185,14 @@ def extract_windows(
             "kills_total": kills_total,
             "deaths": deaths,
             "assists": assists,
-            "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t),
-            "obs_bought": _count_ward(obs_log, t),
-            "sen_bought": _count_ward(sen_log, t),
+            "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t, base_tick),
+            "obs_bought": _count_ward(obs_log, t, base_tick),
+            "sen_bought": _count_ward(sen_log, t, base_tick),
         }
-        new_items = _items_in_window(purchase_log, t - interval_m, t)
+        new_items = _items_in_window(purchase_log, t - interval_m, t, base_tick)
         if new_items:
             metrics["items_bought"] = new_items[:4]
-        pos_x, pos_y = _position_at(position_log, t)
+        pos_x, pos_y = _position_at(position_log, t, base_tick)
         if pos_x is not None:
             metrics["pos_x"], metrics["pos_y"] = pos_x, pos_y
         windows.append(metrics)

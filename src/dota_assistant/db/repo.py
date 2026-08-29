@@ -94,13 +94,50 @@ class Repo:
         return self.conn.execute(sql, args).fetchall()
 
     def lookup_advice_at(self, hero: str, position: str, minute: float) -> list[sqlite3.Row]:
-        """Advice windows whose [t_start,t_end] contains `minute`."""
-        return self.conn.execute(
+        """Advice windows whose [t_start, t_end) contains `minute` (左闭右开，避免边界双命中)。
+
+        特殊处理：若 minute 恰好等于某窗口的 t_start（如 3.0），视为进入该新窗口；
+        这保证在分钟整点/30秒边界处显示的是「当前正在开始的」策略。
+        """
+        rows = self.conn.execute(
             """SELECT * FROM advice
                WHERE hero=? AND position=? AND t_start_min<=? AND t_end_min>=?
                ORDER BY t_start_min""",
             (hero, position, minute, minute),
         ).fetchall()
+        # 过滤：取 t_start <= m < t_end 的活动窗口；若 m==某窗口 t_end 且同时是下一个窗口 t_start，
+        # 则选下一个（左闭右开偏好新窗口）
+        active = [r for r in rows if r["t_start_min"] <= minute < r["t_end_min"]]
+        if active:
+            return active
+        return rows
+
+    def init_advice_from_samples(self, hero: str, position: str, source: str,
+                                 interval_m: int = 30) -> int:
+        """用 samples.behavior 初始化 advice：每个样本生成一条 [t_sec/60, t_end] 的建议。
+
+        30 秒粒度：每条 advice 覆盖一个窗口。已有同窗口的建议会被覆盖（upsert），
+        方便「先灌库、再人工微调」——重新灌同一录像会重置该窗口建议。
+        """
+        rows = self.conn.execute(
+            """SELECT t_sec, behavior FROM samples
+               WHERE hero=? AND position=? ORDER BY t_sec""",
+            (hero, position),
+        ).fetchall()
+        count = 0
+        for r in rows:
+            t_start = r["t_sec"] / 60.0
+            t_end = t_start + interval_m / 60.0
+            self.upsert_advice(Advice(
+                hero=hero,
+                position=position,
+                t_start_min=round(t_start, 2),
+                t_end_min=round(t_end, 2),
+                advice=r["behavior"],
+                source=source or "ingest",
+            ))
+            count += 1
+        return count
 
     # ---- misc ----
     def stats(self) -> dict[str, Any]:

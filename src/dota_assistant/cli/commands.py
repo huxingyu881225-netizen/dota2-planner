@@ -18,7 +18,7 @@ def cmd_ingest(args):
 
     position = normalize_position(args.position)
     ing = Ingester()
-    mr, inserted = ing.run(
+    mr, inserted, advice_n = ing.run(
         replay_path=args.match,
         hero=args.hero,
         position=position,
@@ -28,7 +28,8 @@ def cmd_ingest(args):
         use_llm=getattr(args, "use_llm", None),
     )
     print(f"已入库: match_ref={mr}，写入样本 {inserted} 条 "
-          f"({args.hero}/{position}, 前{args.minutes}分钟×每{args.interval}秒)")
+          f"({args.hero}/{position}, 前{args.minutes}分钟×每{args.interval}秒)，"
+          f"并初始化建议 {advice_n} 条")
 
 
 def cmd_demo(args):
@@ -55,18 +56,9 @@ def cmd_demo(args):
             cs=cs, gpm=gpm, xpm=int(600 + m * 140), networth=nw, kills=3, deaths=0,
         ))
     repo.insert_samples(mr, samples)
-
-    seeds = [
-        (0, 2, "出门买补刀斧+治疗，尽量补到每一个正补，压制对线"),
-        (2, 5, "囤野+拉双野，保持 CS 领先，注意兵线控制"),
-        (5, 8, "带线推塔，利用大招带队打架，控制视野"),
-        (8, 12, "跟团拿塔/推高地，注意切入时机"),
-    ]
-    for s, e, txt in seeds:
-        repo.upsert_advice(Advice(hero=hero, position=position,
-                                  t_start_min=s, t_end_min=e, advice=txt, source="demo"))
+    advice_n = repo.init_advice_from_samples(hero, position, source="demo", interval_m=30)
     print("演示数据已写入 SQLite（英雄 juggernaut / carry）：")
-    print("  样本", len(samples), "条 + 建议", len(seeds), "条")
+    print("  样本", len(samples), "条 + 建议", advice_n, "条（30秒粒度）")
     print("现在可以跑: dota coach --hero juggernaut --position carry / dota serve")
 
 

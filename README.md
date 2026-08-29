@@ -14,7 +14,7 @@
 | 需求 | 命令 | 说明 |
 |------|------|------|
 | 1 灌录相行为入库 | `dota ingest pro.dem --hero H --position P [--minutes N --interval M] [--llm]` | 本地解析 .dem，把该英雄前 N 分钟、每 M 秒的 **核心策略**（LLM 或模板）写入 SQLite |
-| 2 浮窗实时给建议 | `dota coach --hero H --position P --minutes N --interval M [--gui]` | 每 M 秒查 DB 对应时间段建议；macOS NSPanel 浮窗或终端显示 |
+| 2 浮窗实时给建议 | `dota coach --hero H --position P --minutes N --interval M [--gui]` | 每 30 秒显示一条 30 秒窗口的 advice（策略）；macOS NSPanel 浮窗或终端显示 |
 | 3 赛后对比+好坏判定 | `dota diff my.dem --hero H --position P [--result win\|loss]` | 对比本局行为与 DB 参考，指出偏差并判好坏；DB 无该英雄/位置则跳过 |
 | 4 编辑建议界面 | `dota serve` | 浏览器打开 `http://localhost:17373` 修改某英雄/位置/时间段的建议 |
 
@@ -59,6 +59,21 @@ dota ingest ./pro.dem --hero juggernaut --position carry --no-llm
 dota diff ./my.dem --hero juggernaut --position carry --result loss   # 自动：有key用LLM
 dota diff ./my.dem --hero juggernaut --position carry --no-llm        # 强制规则
 ```
+
+## 数据流：samples → advice → 浮窗（30 秒策略链）
+
+```
+灌入录像(dota ingest)
+  └─> samples：每 30 秒一条策略（LLM/模板）落库
+       └─> 自动初始化 advice：每条样本生成一条 [t_start,t_end] 的 30 秒窗口建议
+            ├─> 浮窗/终端(dota coach)：每 30 秒显示当前窗口的策略
+            └─> 编辑界面(dota serve)：可逐条修改任意窗口的 advice（修改后浮窗显示改后的）
+```
+
+- **samples 初始化 advice**：ingest 完成后自动把每 30 秒策略写入 `advice`（30 秒粒度）。
+- **后续可修改**：`dota serve` 编辑界面或代码 upsert 均可覆盖某窗口建议；重新 ingest 同一录像会重置为库内策略。
+- **浮窗显示**：`dota coach` 每 M 秒读取「当前游戏分钟所在的 30 秒窗口」的 advice 并显示
+  （macOS 浮窗或终端），窗口切换自动更新。
 
 ## 在另一台电脑上部署（clone 后运行）
 

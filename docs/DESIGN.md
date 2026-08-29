@@ -184,6 +184,10 @@ CREATE INDEX IF NOT EXISTS idx_advice_hero_pos   ON advice(hero, position);
 
 `coach.run(hero, position, minute_n, interval_m)`：
 
+> **策略链**：`ingest` 落库的每 30 秒策略（`samples.behavior`）会自动初始化成 `advice`
+> （30 秒粒度窗口，`init_advice_from_samples`），coach 每 M 秒查当前分钟所在窗口的建议并显示；
+> `advice` 可被编辑界面（需求 4）逐条修改，重新 ingest 同盘会重置。边界匹配用左闭右开 `[t_start, t_end)` 避免整点双命中。
+
 1. 用户输入 `英雄 + 位置`（浮窗表单或 CLI 参数）。
 2. 每 `interval_m` 秒做一次：
    - 读当前“游戏分钟”（浮窗模式下用户手动输入/或与 GSI 联动；MVP 用会话计时器从 0 开始累加，也可读真实 Dota GSI 的 `map.game_time`）。

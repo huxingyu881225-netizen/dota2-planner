@@ -27,7 +27,7 @@ class Ingester:
         result: Optional[str] = None,
         use_llm: Optional[bool] = None,
     ) -> tuple[int, int]:
-        """返回 (match_ref, 写入样本数)。
+        """返回 (match_ref, 写入样本数, advice 初始化条数)。
 
         use_llm=None 时自动判断：设了 DOTA_LLM_API_KEY 则用 LLM，否则回退模板。
         use_llm=True 强制 LLM（无 key 会直接回退模板并静默）。
@@ -79,4 +79,6 @@ class Ingester:
         with Repo(self.conn) as repo:
             match_ref = repo.insert_match(meta)
             inserted = repo.insert_samples(match_ref, samples)
-        return match_ref, inserted
+            # 用样本策略初始化 advice（每 interval_m 秒一条，可后续人工编辑）
+            advice_count = repo.init_advice_from_samples(hero, position, source=str(replay_path), interval_m=interval_m)
+        return match_ref, inserted, advice_count

@@ -97,21 +97,27 @@ def cmd_coach(args):
             print(f"[提示] 无法监听 GSI 端口 {getattr(args, 'gsi_port', 6000)}（可能被占用），回退会话计时。")
             gsi_server = None
 
-    conn = connect()
-    init_schema(conn)
-    clock = GsiGameClock(gsi_state) if use_gsi_clock else SessionClock()
-
-    coach = Coach(Repo(conn), display, clock=clock, gsi_state=gsi_state if use_gsi_clock else None)
+    # item1: SQLite 连接必须在 _run_coach 所在线程创建/使用/关闭（GUI 下该线程是后台线程），
+    # 避免 "SQLite objects created in a thread can only be used in that same thread"
     hero_arg = getattr(args, "hero", None) or None
     pos_arg = normalize_position(args.position) if args.position else None
+    # GUI 模式：恒让用户在浮窗确认位置（多局重置后也是），即使库里只有一个位置
+    force_pos_confirm = bool(use_gui and getattr(display, "requires_position_confirmation", False))
     print(f"开始教练模式（英雄: GSI自动识别/{hero_arg or '无'}，位置: {pos_arg or '自动选择'}），"
           f"前{args.minutes}分钟，每{args.interval}秒。仅当英雄/位置在库中有建议才提。Ctrl+C 退出。")
 
     def _run_coach():
+        conn = connect()
+        init_schema(conn)
+        clock = GsiGameClock(gsi_state) if use_gsi_clock else SessionClock()
+        coach = Coach(Repo(conn), display, clock=clock,
+                      gsi_state=gsi_state if use_gsi_clock else None)
         try:
             coach.run(hero=hero_arg, position=pos_arg,
-                      minute_n=args.minutes, interval_m=args.interval)
+                      minute_n=args.minutes, interval_m=args.interval,
+                      force_position_confirm=force_pos_confirm)
         finally:
+            conn.close()
             if use_gui:
                 # coach 结束 -> 退出 AppKit 事件循环
                 display.stop_app() if hasattr(display, "stop_app") else None

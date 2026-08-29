@@ -80,15 +80,17 @@ def test_gsi_clock_requires_in_game():
 
 
 def test_clock_time_preferred():
-    """GSI 时间优先用 map.clock_time，缺失时回退 game_time。"""
+    """coach_time 优先用 map.clock_time，缺失时回退 game_time。"""
     st = GsiState()
     st.update({"map": {"clock_time": 90.0, "game_time": 60.0,
                        "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
                "hero": {"info": {"name": "npc_dota_hero_axe"}}, "player": {"team": 2}})
-    assert st.game_time == 90.0  # clock_time 优先
+    assert st.coach_time == 90.0   # coach_time 优先 clock_time
+    assert st.clock_time == 90.0
+    assert st.game_time == 60.0    # 原始 game_time 保留
 
     st2 = GsiState()
     st2.update({"map": {"game_time": 45.0,
                         "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
                 "hero": {"info": {"name": "npc_dota_hero_axe"}}, "player": {"team": 2}})
-    assert st2.game_time == 45.0  # 无 clock_time 回退 game_time
+    assert st2.coach_time == 45.0  # 无 clock_time 回退 game_time

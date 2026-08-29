@@ -79,3 +79,49 @@ def test_multiple_positions_ask_display():
             return "mid"
     c = Coach(repo, AskDisplay())
     assert c._resolve_position("juggernaut", None) == "mid"
+
+
+class FakeRepo2(FakeRepo):
+    pass
+
+
+def test_gsi_clock_negative_coach_time():
+    """coach_time<0（选人阶段倒计时）-> minute() 返回 None。"""
+    from dota_assistant.overlay.coach import GsiGameClock
+    st = GsiState()
+    st.update({"map": {"clock_time": -10.0, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+               "hero": {"info": {"name": "npc_dota_hero_juggernaut"}}, "player": {"team": 2}})
+    clock = GsiGameClock(st)
+    assert clock.minute() is None   # <0 不吐时间
+    st.update({"map": {"clock_time": 0.0, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+               "hero": {"info": {"name": "npc_dota_hero_juggernaut"}}, "player": {"team": 2}})
+    assert clock.minute() == 0.0
+
+
+def test_match_change_resets_position():
+    """新 matchid -> 重新解析位置。"""
+    class AskRec(Rec):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+        def ask_position(self, hero, options):
+            self.calls.append(options)
+            return options[0]   # 返回第一个（排序后为 carry）
+
+    gsi = GsiState()
+    rec = AskRec()
+    repo = FakeRepo({("juggernaut", "carry"): [{"t_start_min": 0, "t_end_min": 60, "advice": "x"}],
+                     ("juggernaut", "mid"): [{"t_start_min": 0, "t_end_min": 60, "advice": "y"}]})
+    # 第一局：matchid=100，强制确认 -> carry
+    gsi.update({"map": {"clock_time": 30, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "matchid": "100"},
+                "hero": {"info": {"name": "npc_dota_hero_juggernaut"}}, "player": {"team": 2}})
+    c = Coach(repo, rec, clock=None)
+    c.gsi = gsi
+    # 手动模拟 run 内部分支
+    assert c._match_changed() is False  # 首次记录 matchid
+    assert c._resolve_position("juggernaut", None, force_confirm=True) == "carry"
+    # 新一局 matchid 变化
+    gsi.update({"map": {"clock_time": 30, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "matchid": "101"},
+                "hero": {"info": {"name": "npc_dota_hero_juggernaut"}}, "player": {"team": 2}})
+    assert c._match_changed() is True   # 识别到新一局
+    assert c._resolve_position("juggernaut", None, force_confirm=True) == "carry"

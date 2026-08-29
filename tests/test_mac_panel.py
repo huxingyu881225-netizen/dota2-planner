@@ -27,14 +27,16 @@ def test_overlay_build_and_display():
     m.close()
 
 
-def test_start_advice_mode_mouse_passthrough():
+def test_mouse_passthrough_manual_toggle():
+    """鼠标穿透不再由 start_advice_mode 自动开启，改用 F10(toggle_mouse_passthrough) 手动控制。"""
     m = MacOverlay()
     m.open(hero="axe", position="carry")
     assert m._panel.ignoresMouseEvents() is False
     m.start_advice_mode()
-    assert m._panel.ignoresMouseEvents() is True   # 不挡操作
-    # 切回交互（ask_position 前）
-    m._enable_mouse(False)
+    assert m._panel.ignoresMouseEvents() is False  # item6: 不自动穿透
+    assert m.toggle_mouse_passthrough() is True     # F10 开启穿透
+    assert m._panel.ignoresMouseEvents() is True
+    assert m.toggle_mouse_passthrough() is False    # F10 切回可点击
     assert m._panel.ignoresMouseEvents() is False
     m.close()
 
@@ -67,4 +69,16 @@ def test_register_hotkey():
     m.open(hero="", position="")
     m._register_hotkey()
     assert m._key_monitor is not None
+    m.close()
+
+
+def test_overlay_position_env(monkeypatch):
+    """DOTA_OVERLAY_X/Y 生效；未设置时默认右上角。"""
+    import os
+    monkeypatch.setenv("DOTA_OVERLAY_X", "100")
+    monkeypatch.setenv("DOTA_OVERLAY_Y", "200")
+    m = MacOverlay()
+    m.open(hero="", position="")
+    f = m._panel.frame()
+    assert int(f.origin.x) == 100 and int(f.origin.y) == 200
     m.close()

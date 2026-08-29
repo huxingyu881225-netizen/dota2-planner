@@ -42,13 +42,17 @@ class MacOverlay:
     POSITIONS = ["carry", "mid", "offline", "offlane_support", "safelane_support"]
 
     def __init__(self):
+        import os
         self._panel = None
         self._hero_label = None
         self._pos_popup = None
         self._advice_label = None
         self._clicked_start = threading.Event()
         self._button_target = None
-        self._mouse_passthrough = False      # 是否鼠标穿透（开始出建议后 True，不挡游戏操作）
+        # GUI 模式下总是让用户在浮窗确认位置（即使库里只有一个位置）
+        self.requires_position_confirmation = True
+        # 鼠标穿透初始值：默认 False（可交互）；可用环境变量 DOTA_OVERLAY_PASSTHROUGH=1 设为穿透
+        self._mouse_passthrough = bool(os.environ.get("DOTA_OVERLAY_PASSTHROUGH", ""))
         self._shown_hero = None              # 已显示过的英雄（去重）
         self._hidden = False                 # F9 隐藏状态
         self._key_monitor = None             # NSEvent 全局热键监听
@@ -59,17 +63,24 @@ class MacOverlay:
             self._main(lambda: self._sync_display_hero(hero))
 
     def start_advice_mode(self):
-        """进入出建议模式：鼠标穿透（不挡操作）。"""
-        self._enable_mouse(True)
+        """进入出建议模式（兼容 coach 调用）。鼠标穿透由用户用 F10 手动控制，不自动切换。"""
+        # item 6：点「开始」后不再自动 setIgnoresMouseEvents_(True)，交给 F10 切换
+        pass
 
-    def _enable_mouse(self, passthrough: bool):
-        """设置鼠标是否穿透。passthrough=True 时不挡游戏操作；False 时恢复交互。"""
+    def _set_mouse_passthrough(self, passthrough: bool):
+        """设置鼠标是否穿透（F10 手动/初始化）。passthrough=True 不挡游戏操作。"""
         def set_(flag: bool):
             if self._panel is not None:
                 self._panel.setIgnoresMouseEvents_(flag)
                 self._mouse_passthrough = flag
         if self._panel is not None:
             self._main(lambda: set_(passthrough))
+
+    def toggle_mouse_passthrough(self):
+        """F10：切换 鼠标可点击 <-> 鼠标穿透。返回切换后的状态。"""
+        self._mouse_passthrough = not self._mouse_passthrough
+        self._set_mouse_passthrough(self._mouse_passthrough)
+        return self._mouse_passthrough
 
     def _sync_display_hero(self, hero: str):
         """去重显示英雄：只在该英雄变化时才更新浮窗文本（避免一直刷“等待 GSI”）。"""
@@ -85,7 +96,7 @@ class MacOverlay:
 
         等待期间恢复鼠标交互（setIgnoresMouseEvents_(False)），让用户能点下拉/开始按钮。
         """
-        self._enable_mouse(False)  # 恢复交互
+        self._set_mouse_passthrough(False)  # 恢复交互
         self._main(lambda: self._load_positions(options))
         self._clicked_start.clear()
         self._main(lambda: self._set_status_text(f"英雄 {hero} 有多个位置，请选择后点「开始」"))
@@ -112,7 +123,24 @@ class MacOverlay:
         return self
 
     def _build(self, hero: str, position: str):
-        rect = AppKit.NSMakeRect(300, 400, 480, 230)
+        import os
+        # 窗口尺寸
+        W, H = 480, 230
+        # 位置：优先 DOTA_OVERLAY_X / DOTA_OVERLAY_Y；否则默认右上角
+        x_env = os.environ.get("DOTA_OVERLAY_X")
+        y_env = os.environ.get("DOTA_OVERLAY_Y")
+        if x_env and y_env:
+            try:
+                x, y = int(x_env), int(y_env)
+            except ValueError:
+                x = y = None
+        else:
+            x = y = None
+        if x is None or y is None:
+            scr = AppKit.NSScreen.mainScreen().frame()
+            x = int(scr.origin.x + scr.size.width - W - 20)
+            y = int(scr.origin.y + scr.size.height - H - 20)
+        rect = AppKit.NSMakeRect(x, y, W, H)
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, AppKit.NSWindowStyleMaskBorderless, AppKit.NSBackingStoreBuffered, False)
         panel.setLevel_(AppKit.NSFloatingWindowLevel)
@@ -198,15 +226,21 @@ class MacOverlay:
         AppKit.NSApplication.sharedApplication().run()
 
     def _register_hotkey(self):
-        """监听 F9（keyCode=97）/ Fn+F9 切换浮窗隐藏/显示。需辅助功能权限。"""
-        from AppKit import NSEvent, NSKeyDownMask, NSFunctionKeyMask
-        key_code = 97  # F9
+        """监听 F9/Fn+F9 隐藏显示；F10/Fn+F10 切换鼠标穿透。需辅助功能权限。"""
+        from AppKit import NSEvent, NSKeyDownMask
+        F9 = 97
+        F10 = 85
 
         def handler(ev):
             try:
-                if ev.keyCode() == key_code:
-                    # 检测 Fn（NSFunctionKeyMask = 1<<23）或纯 F9 都算
+                kc = ev.keyCode()
+                if kc == F9:
                     self._main(self.toggle_visible)
+                elif kc == F10:
+                    def _do():
+                        state = self.toggle_mouse_passthrough()
+                        self._set_status_text("鼠标穿透" if state else "鼠标可点击")
+                    self._main(_do)
             except Exception:
                 pass
             return ev
@@ -235,8 +269,7 @@ class MacOverlay:
     # ---------- 内部 ----------
     def _on_start(self):
         self._clicked_start.set()
-        # 开始出建议后：鼠标穿透，浮窗不再挡游戏操作
-        self.start_advice_mode()
+        # item 6：不自动改鼠标穿透（由用户 F10 手动控制）
 
     def _set_hero_text(self, hero: str):
         if self._hero_label is not None:

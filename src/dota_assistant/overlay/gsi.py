@@ -1,15 +1,17 @@
 """Dota 2 Game State Integration (GSI) 服务器。
 
 Dota 2 通过 gamestate_integration_*.cfg 把游戏状态以 JSON POST 到本地端口（默认 6000）。
-本模块起一个 HTTP 服务器接收这些 POST，解析出游戏时间与当前英雄，供 coach 做
-“从游戏开始自动计时”的时钟，以及自动识别英雄名。
+本模块起一个 HTTP 服务器接收这些 POST，解析出游戏时间/当前英雄/对局ID，供 coach 做
+“从游戏开始自动计时”的时钟、自动识别英雄名，以及多局切换时的重置。
 
-参考字段（dota-ai-coach 同款思路）：
-    map.clock_time       —— 游戏时钟时间（秒，游戏开始时从 0 计，比 game_time 更精确）
-    map.game_time        —— 兜底用（部分版本/时刻只有 game_time）
+参考字段：
+    map.clock_time       —— 游戏时钟时间（秒）。可能为负（选人/策略阶段倒计时到 0 才开始）
+    map.game_time        —— 兜底时间（部分版本/时刻只有 game_time）
+    map.matchid          —— 对局 match id（用于识别是否新开一局）
     map.game_state       —— DOTA_GAMERULES_STATE_*；GAME_IN_PROGRESS 表示对局中
     hero.info.name       —— 本地玩家英雄 NPC 名，如 npc_dota_hero_juggernaut
     player.team          —— 本地玩家队伍
+    player.session_num   —— 会话序号（兜底匹配识别）
 """
 from __future__ import annotations
 
@@ -24,10 +26,14 @@ class GsiState:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._clock_time: float = 0.0
         self._game_time: float = 0.0
+        self._coach_time: float = 0.0     # 教练用时间：优先 clock_time，缺失用 game_time
         self._game_state: str = ""
         self._hero_name: str = ""
         self._team: str = ""
+        self._match_id: str = ""
+        self._session_id: str = ""
         self._last_update_ts: float = 0.0
 
     def _now(self) -> float:
@@ -38,11 +44,24 @@ class GsiState:
         with self._lock:
             m = data.get("map") or {}
             try:
-                # 优先用更精确的 clock_time；缺失时回退 game_time
-                self._game_time = float(m.get("clock_time", m.get("game_time", 0)) or 0)
+                self._clock_time = float(m.get("clock_time", 0) or 0)
+            except (TypeError, ValueError):
+                self._clock_time = 0.0
+            try:
+                self._game_time = float(m.get("game_time", 0) or 0)
             except (TypeError, ValueError):
                 self._game_time = 0.0
+            # coach_time 优先 clock_time，缺失用 game_time
+            if "clock_time" in m and m.get("clock_time") is not None:
+                self._coach_time = self._clock_time
+            else:
+                self._coach_time = self._game_time
             self._game_state = str(m.get("game_state", "") or "")
+
+            # match/session 识别
+            self._match_id = str(m.get("matchid", "") or "") or str(m.get("match_id", "") or "")
+            player = data.get("player") or {}
+            self._session_id = str(player.get("session_num", "") or "")
 
             # 当前本地玩家英雄名：hero.info.name（部分版本 hero.name）
             hero = data.get("hero") or {}
@@ -51,15 +70,25 @@ class GsiState:
             self._hero_name = str(name)
 
             # 队伍
-            player = data.get("player") or {}
             self._team = str(player.get("team", "") or "")
 
             self._last_update_ts = self._now()
 
     @property
+    def clock_time(self) -> float:
+        with self._lock:
+            return self._clock_time
+
+    @property
     def game_time(self) -> float:
         with self._lock:
             return self._game_time
+
+    @property
+    def coach_time(self) -> float:
+        """教练用时间：优先 clock_time，缺失回退 game_time。"""
+        with self._lock:
+            return self._coach_time
 
     @property
     def game_state(self) -> str:
@@ -77,11 +106,20 @@ class GsiState:
             return self._team
 
     @property
+    def match_id(self) -> str:
+        with self._lock:
+            return self._match_id
+
+    @property
+    def session_id(self) -> str:
+        with self._lock:
+            return self._session_id
+
+    @property
     def in_game(self) -> bool:
         """对局进行中（排除英雄选择/等待/结束）。"""
         gs = self.game_state
-        # 对局进行中；DOTA_GAMERULES_STATE_GAME_IN_PROGRESS
-        return "GAME_IN_PROGRESS" in gs or (gs == "" and self.game_time >= 0)
+        return "GAME_IN_PROGRESS" in gs or (gs == "" and self.coach_time >= 0)
 
     @property
     def fresh(self, max_age: float = 35.0) -> bool:
@@ -90,7 +128,8 @@ class GsiState:
         return (self._now() - self._last_update_ts) <= max_age
 
     def to_summary(self) -> str:
-        return f"game_time={self.game_time:.0f}s state={self.game_state!r} hero={self.hero_name!r} team={self.team!r}"
+        return (f"coach_time={self.coach_time:.0f}s state={self.game_state!r} "
+                f"hero={self.hero_name!r} team={self.team!r} match={self.match_id!r}")
 
 
 class _GSIHandler(BaseHTTPRequestHandler):
@@ -101,7 +140,6 @@ class _GSIHandler(BaseHTTPRequestHandler):
             if body:
                 data = json.loads(body.decode("utf-8", errors="replace"))
                 if isinstance(data, dict):
-                    # server 持有 state 的引用
                     self.server._gsi_state.update(data)  # type: ignore[attr-defined]
         except Exception:
             pass
@@ -109,17 +147,19 @@ class _GSIHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):  # noqa
-        """健康检查：返回当前 GSI 状态摘要。"""
         summary = getattr(self.server, "_gsi_state", None)  # type: ignore[attr-defined]
         if summary is None:
             text = "{}"
         else:
             import json as _j
             text = _j.dumps({
+                "clock_time": summary.clock_time,
                 "game_time": summary.game_time,
+                "coach_time": summary.coach_time,
                 "game_state": summary.game_state,
                 "hero": summary.hero_name,
                 "team": summary.team,
+                "match_id": summary.match_id,
                 "in_game": summary.in_game,
                 "fresh": summary.fresh,
             })
@@ -145,7 +185,6 @@ class GsiServer:
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> bool:
-        """启动服务器，返回是否成功监听。"""
         try:
             self._httpd = HTTPServer((self.host, self.port), _GSIHandler)
             self._httpd._gsi_state = self.state  # type: ignore[attr-defined]

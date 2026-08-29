@@ -14,7 +14,7 @@
 | 需求 | 命令 | 说明 |
 |------|------|------|
 | 1 灌录相行为入库 | `dota ingest pro.dem --hero H --position P [--minutes N --interval M] [--llm]` | 本地解析 .dem，把该英雄前 N 分钟、每 M 秒的 **核心策略**（LLM 或模板）写入 SQLite |
-| 2 浮窗实时给建议 | `dota coach --hero H --position P --minutes N --interval M [--gui]` | 每 30 秒显示一条 30 秒窗口的 advice（策略）；macOS NSPanel 浮窗或终端显示 |
+| 2 浮窗实时给建议 | `dota coach [--hero H --position P] [--gui]` | 接 Dota2 GSI 从游戏开始自动计时，每 30 秒显示一条 30 秒窗口的 advice；浮窗可输入英雄/位置 |
 | 3 赛后对比+好坏判定 | `dota diff my.dem --hero H --position P [--result win\|loss]` | 对比本局行为与 DB 参考，指出偏差并判好坏；DB 无该英雄/位置则跳过 |
 | 4 编辑建议界面 | `dota serve` | 浏览器打开 `http://localhost:17373` 修改某英雄/位置/时间段的建议 |
 
@@ -61,6 +61,26 @@ dota ingest ./pro.dem --hero juggernaut --position carry --no-llm
 dota diff ./my.dem --hero juggernaut --position carry --result loss   # 自动：有key用LLM
 dota diff ./my.dem --hero juggernaut --position carry --no-llm        # 强制规则
 ```
+
+## 计时方式：Dota2 GSI（从游戏开始自动计时）
+
+`dota coach` 默认启动一个 **GSI 服务器**（监听 `127.0.0.1:6000`），Dota2 把游戏状态实时
+POST 过来，程序用 `map.game_time` **从游戏开始时自动计时**，不再需要手动掐秒。
+
+**1) 放配置文件**：把仓库根的 `gamestate_integration_dotaplanner.cfg` 复制到 Dota2 的 cfg 目录：
+```
+<Steam>/steamapps/common/dota 2 beta/game/dota/cfg/gamestate_integration/
+```
+
+**2) 运行 coach**（先启动 dota coach，再开始游戏）：
+```bash
+dota coach --hero juggernaut --position carry --minutes 10 --interval 30 --gui
+# 不带 --hero/--position 时会从 GSI 自动识别英雄 + 浮窗里可手动输入英雄/位置
+```
+
+- 游戏开始（GAME_IN_PROGRESS）→ GSI 计时器自动从 0 走，到 N 分钟结束。
+- 未接 GSI 或端口被占用 → 自动回退会话计时。
+- `--no-gsi` 关闭 GSI；`--gsi-port` 改端口。
 
 ## 数据流：samples → advice → 浮窗（30 秒策略链）
 

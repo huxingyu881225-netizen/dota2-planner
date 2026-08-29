@@ -42,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--minutes", type=int, default=10)
     co.add_argument("--interval", type=int, default=30)
     co.add_argument("--gui", action="store_true", help="尝试 macOS 浮窗")
+    co.add_argument("--gsi-port", type=int, default=6000, help="GSI 监听端口(默认6000)")
+    co.add_argument("--no-gsi", action="store_true", help="不启用 GSI，回退会话计时")
 
     df = sub.add_parser("diff", help="赛后对比行为 + 好坏判定")
     df.add_argument("match", help=".dem 录像文件路径")

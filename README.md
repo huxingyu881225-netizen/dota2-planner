@@ -74,13 +74,17 @@ POST 过来，程序用 `map.game_time` **从游戏开始时自动计时**，不
 
 **2) 运行 coach**（先启动 dota coach，再开始游戏）：
 ```bash
-dota coach --hero juggernaut --position carry --minutes 10 --interval 30 --gui
-# 不带 --hero/--position 时会从 GSI 自动识别英雄 + 浮窗里可手动输入英雄/位置
+dota coach --gui
+# 或指定位置： dota coach --position carry --gui
 ```
 
+- **英雄名**：由 GSI 实时感知（浮窗里的英雄是只读显示，无需手动输入）。
+- **位置**：用户在浮窗下拉选择库里该英雄**已存在 advice** 的位置；库里该英雄只有一个位置时自动选。
+- **提建议的条件**：只有当 (英雄, 位置) 在 advice 库里有数据，才按游戏时间输出建议；
+  游戏未开始（GSI 没信号）或 库中无该 英雄+位置 → 不提 advice，只显示提示。
 - 游戏开始（GAME_IN_PROGRESS）→ GSI 计时器自动从 0 走，到 N 分钟结束。
-- 未接 GSI 或端口被占用 → 自动回退会话计时。
-- `--no-gsi` 关闭 GSI；`--gsi-port` 改端口。
+- 未接 GSI 或端口被占用 → 回退会话计时；`--no-gsi` 关闭 GSI；`--gsi-port` 改端口。
+- 可选 `--hero`/`--position` 直接指定（不依赖 GSI/选择）。
 
 ## 数据流：samples → advice → 浮窗（30 秒策略链）
 

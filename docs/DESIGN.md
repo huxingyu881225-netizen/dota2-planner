@@ -190,9 +190,9 @@ CREATE INDEX IF NOT EXISTS idx_advice_hero_pos   ON advice(hero, position);
 
 1. 用户输入 `英雄 + 位置`（浮窗表单或 CLI 参数）。
 2. 每 `interval_m` 秒做一次：
-   - 读当前“游戏分钟”——默认接 **Dota2 GSI**：启动本地 HTTP 服务器（`overlay/gsi.py`，监听 `127.0.0.1:6000`），
-     Dota2 通过 `gamestate_integration_dotaplanner.cfg` 实时 POST 游戏状态，用 `map.game_time` 从游戏开始自动计时；
-     未接 GSI 时回退会话计时器（`SessionClock`）。英雄名也可从 GSI 的 `hero.info.name` 自动识别。
+   - 读当前“游戏分钟”——默认接 **Dota2 GSI**：`overlay/gsi.py` 起本地 HTTP 服务器（`127.0.0.1:6000`），
+     Dota2 通过 `gamestate_integration_dotaplanner.cfg` 实时 POST，用 `map.game_time` 从游戏开始自动计时；
+     未接 GSI 时回退会话计时器（`SessionClock`）。英雄名从 GSI 的 `hero.info.name` 感知（去 `npc_dota_hero_` 前缀）。
    - `repo.lookup_advice(hero, position, current_minute)` 查命中窗口的 `advice`。
    - 若无该英雄/位置或该分钟，显示“暂无参考建议，请先灌入/编辑”。
    - 持续到 `current_minute >= minute_n` 停止。

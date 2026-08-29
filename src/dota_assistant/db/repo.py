@@ -139,6 +139,20 @@ class Repo:
             count += 1
         return count
 
+    def advice_positions_for_hero(self, hero: str) -> list[str]:
+        """advice 表里该英雄已有数据的位置列表（去重）。"""
+        rows = self.conn.execute(
+            "SELECT DISTINCT position FROM advice WHERE hero=? ORDER BY position", (hero,)
+        ).fetchall()
+        return [r["position"] for r in rows]
+
+    def hero_position_advice_exists(self, hero: str, position: str) -> bool:
+        """该 英雄+位置 在 advice 表里是否有数据。"""
+        row = self.conn.execute(
+            "SELECT 1 FROM advice WHERE hero=? AND position=? LIMIT 1", (hero, position)
+        ).fetchone()
+        return row is not None
+
     # ---- misc ----
     def stats(self) -> dict[str, Any]:
         def n(tbl: str) -> int:

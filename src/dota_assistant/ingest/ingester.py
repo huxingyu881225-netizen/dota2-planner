@@ -58,7 +58,7 @@ class Ingester:
                 behavior=behavior,
                 cs=metrics.get("cs"),
                 gpm=metrics.get("gpm"),
-                xpm=metrics.get("xp"),
+                xpm=metrics.get("xpm"),
                 networth=metrics.get("networth"),
                 kills=metrics.get("kills_total"),
                 deaths=metrics.get("deaths"),

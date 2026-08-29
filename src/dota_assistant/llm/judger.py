@@ -3,6 +3,7 @@
 把 diff 出的偏差列表一次性发给 LLM，让它判断每个偏差导致了好的还是坏的结果，
 并给出人话解释。未配置 DOTA_LLM_API_KEY 或调用失败时，自动保留规则判定的
 outcome（不覆盖），保证离线可用。
+支持环境变量 DOTA_LLM_MAX_TOKENS(默认500)、DOTA_LLM_REASONING_EFFORT(默认不设/模型默认)。
 """
 from __future__ import annotations
 
@@ -67,18 +68,23 @@ def enrich_with_llm(
         "判断结果:"
     )
 
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "500")),
+    }
+    reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT")
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+
     try:
         resp = requests.post(
             url,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.2,
-                "max_tokens": 800,
-            },
+            json=payload,
             headers=headers,
             timeout=int(os.environ.get("DOTA_LLM_TIMEOUT", "30")),
         )

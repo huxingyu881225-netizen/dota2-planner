@@ -9,6 +9,9 @@
     DOTA_LLM_BASE_URL     —— 默认 https://openrouter.ai/api/v1（兼容 OpenAI 协议）
     DOTA_LLM_MODEL        —— 默认 openrouter/auto（或指定如 openai/gpt-4o-mini）
     DOTA_LLM_CONCURRENCY  —— 批量并发数，默认 4
+    DOTA_LLM_MAX_TOKENS   —— 单窗口生成最大 token，默认 500（过小如 120 会导致
+                             部分模型只输出 reasoning、content 为空）
+    DOTA_LLM_REASONING_EFFORT —— 推理强度，默认 high（OpenAI 兼容的 reasoning 模型用）
 """
 from __future__ import annotations
 
@@ -79,8 +82,11 @@ def generate_strategy_batch(
                     {"role": "user", "content": strategy_prompt(hero, position, item)},
                 ],
                 "temperature": 0.4,
-                "max_tokens": 120,
+                "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "500")),
             }
+            reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT")
+            if reasoning_effort:
+                payload["reasoning_effort"] = reasoning_effort
             resp = requests.post(url, json=payload, headers=headers, timeout=int(os.environ.get("DOTA_LLM_TIMEOUT", "30")))
             resp.raise_for_status()
             text = (resp.json()["choices"][0]["message"]["content"] or "").strip()

@@ -48,3 +48,43 @@ def test_llm_failure_falls_back_to_template(monkeypatch):
     monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", boom)
     out = generate_strategy_batch([WIN], "juggernaut", "carry")
     assert len(out) == 1 and len(out[0]) > 0  # fallback template
+
+
+def test_llm_max_tokens_and_reasoning(monkeypatch):
+    """默认 max_tokens=500，且 DOTA_LLM_REASONING_EFFORT 会进入请求体。"""
+    monkeypatch.setenv("DOTA_LLM_API_KEY", "k")
+    monkeypatch.setenv("DOTA_LLM_REASONING_EFFORT", "high")
+    captured = {}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "稳发育"}}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["body"] = json
+        return R()
+
+    monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", fake_post)
+    out = generate_strategy_batch([WIN], "juggernaut", "carry")
+    assert out == ["稳发育"]
+    assert captured["body"]["max_tokens"] == 500
+    assert captured["body"].get("reasoning_effort") == "high"
+
+
+def test_llm_max_tokens_env(monkeypatch):
+    """DOTA_LLM_MAX_TOKENS 可覆盖默认 500。"""
+    monkeypatch.setenv("DOTA_LLM_API_KEY", "k")
+    monkeypatch.setenv("DOTA_LLM_MAX_TOKENS", "300")
+    captured = {}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "x"}}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["body"] = json
+        return R()
+
+    monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", fake_post)
+    generate_strategy_batch([WIN], "juggernaut", "carry")
+    assert captured["body"]["max_tokens"] == 300

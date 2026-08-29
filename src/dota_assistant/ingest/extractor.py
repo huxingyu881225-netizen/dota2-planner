@@ -127,6 +127,18 @@ def _position_at(position_log, t_sec: int, base_tick: int = 0):
     return best
 
 
+
+def _minute_series_value(player, attr: str, minute: int) -> Any:
+    """从分钟级序列(如 total_deaths_t_min/min_idx)取第 minute 分钟的累计值。若越界则取最后一个。"""
+    vals = getattr(player, attr, None) or []
+    if not vals:
+        return None
+    idx = min(int(minute), len(vals) - 1)
+    try:
+        return vals[idx]
+    except Exception:
+        return None
+
 def _int(v) -> Any:
     if v is None:
         return None
@@ -143,7 +155,7 @@ def extract_windows(
 ) -> list[dict[str, Any]]:
     """按前 N 分钟、每 M 秒，输出每个窗口的结构化指标字典。
 
-    每个窗口的 key：t_sec, t_min, window_interval, cs, gpm(earned), networth,
+    每个窗口的 key：t_sec, t_min, window_interval, cs, gpm(=earned*60/t), xpm(=xp/(t/60)), networth,
     gold, xp, dn, window_gain, kills_total, deaths, assists, kills_in_window,
     obs_bought, sen_bought, items_bought[]（可选）, pos_x/pos_y（可选）。
     供 LLM 生成「核心策略」文本。
@@ -160,31 +172,52 @@ def extract_windows(
     sen_log = list(getattr(player, "sen_log", None) or [])
     purchase_log = list(getattr(player, "purchase_log", None) or [])
     position_log = list(getattr(player, "position_log", None) or [])
-    kills_total = int(getattr(player, "kills", 0) or 0)
-    deaths = int(getattr(player, "deaths", 0) or 0)
     assists = int(getattr(player, "assists", 0) or 0)
 
     windows: list[dict[str, Any]] = []
     t = 0
     while t <= tmax:
-        prev_gold = _at(series["gold"], max(0, t - interval_m))
+        # 累计值（累计赚取金 / 累计经验）——用于算 GPM/XPM 与窗口收入增量
+        cur_earned = _at(series["earned"], t)
+        prev_earned = _at(series["earned"], max(0, t - interval_m))
         cur_gold = _at(series["gold"], t)
-        window_gain = (cur_gold - prev_gold) if (prev_gold is not None and cur_gold is not None and cur_gold >= prev_gold) else 0.0
+        cur_xp = _at(series["xp"], t)
+
+        # window_gain：累计收入 total_earned_gold_t 的窗口差值（买装备不消耗累计收入，故不会因买东西下降）
+        window_gain = 0.0
+        if cur_earned is not None and prev_earned is not None:
+            window_gain = cur_earned - prev_earned
+
+        # GPM = 累计赚取金 * 60 / t_sec（t_sec=0 -> 0）；XPM = xp / (t_sec/60)
+        if t > 0:
+            gpm = (cur_earned * 60.0 / t) if cur_earned is not None else None
+            xpm = (cur_xp / (t / 60.0)) if cur_xp is not None else None
+        else:
+            gpm = 0.0
+            xpm = 0.0
+
+        # deaths：用分钟级累计死亡序列按当前分钟取，不写整局最终值
+        minute_idx = int(t // 60)
+        cum_deaths = _minute_series_value(player, "total_deaths_t_min", minute_idx)
+        if cum_deaths is None:
+            cum_deaths = 0
 
         metrics: dict[str, Any] = {
             "t_sec": t,
             "t_min": round(t / 60.0, 2),
             "window_interval": interval_m,
             "cs": _int(_at(series["lh"], t)),
-            "gpm": _int(_at(series["earned"], t)),
+            "gpm": _int(gpm),
             "networth": _int(_at(series["nw"], t)),
             "gold": _int(cur_gold),
-            "xp": _int(_at(series["xp"], t)),
+            "xp": _int(cur_xp),
+            "xpm": _int(xpm),
             "dn": _int(_at(series["dn"], t)),
             "window_gain": _int(window_gain),
-            "kills_total": kills_total,
-            "deaths": deaths,
+            "kills_total": int(getattr(player, "kills", 0) or 0),
+            "deaths": int(cum_deaths),
             "assists": assists,
+            "deaths_cum_at_min": int(cum_deaths),
             "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t, base_tick),
             "obs_bought": _count_ward(obs_log, t, base_tick),
             "sen_bought": _count_ward(sen_log, t, base_tick),
@@ -225,7 +258,7 @@ def extract(
                 behavior=behavior,
                 cs=metrics.get("cs"),
                 gpm=metrics.get("gpm"),
-                xpm=metrics.get("xp"),
+                xpm=metrics.get("xpm"),
                 networth=metrics.get("networth"),
                 kills=metrics.get("kills_total"),
                 deaths=metrics.get("deaths"),

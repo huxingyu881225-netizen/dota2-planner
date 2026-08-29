@@ -77,9 +77,9 @@ def enrich_with_llm(
         "temperature": 0.2,
         "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "1000")),
     }
-    reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT")
-    if reasoning_effort:
-        payload["reasoning_effort"] = reasoning_effort
+    # 默认 high（用户要求）；可用 DOTA_LLM_REASONING_EFFORT 覆盖 (low/medium/high)
+    reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT", "high")
+    payload["reasoning_effort"] = reasoning_effort
 
     try:
         resp = requests.post(

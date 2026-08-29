@@ -137,11 +137,12 @@ class Coach:
                 time.sleep(min(interval_m, 5))
                 continue
 
-            # 多局切换：重置英雄/位置，回到初始状态，重新让用户确认
+            # 多局切换：重置英雄/位置/已显示建议，回到初始状态，重新让用户确认
             if self._match_changed():
                 self._resolved_pos = None
                 self._pos_hero = None
                 last_hint = None
+                last_shown.clear()          # 清理已显示建议，避免新一局不刷新
                 over_minute_notified = False
 
             cur_hero = pending_hero

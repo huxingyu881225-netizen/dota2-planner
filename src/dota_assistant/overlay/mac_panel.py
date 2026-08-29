@@ -56,7 +56,9 @@ class MacOverlay:
         self._mouse_passthrough = bool(os.environ.get("DOTA_OVERLAY_PASSTHROUGH", ""))
         self._shown_hero = None              # 已显示过的英雄（去重）
         self._hidden = False                 # F9 隐藏状态
-        self._key_monitor = None             # NSEvent 全局热键监听
+        self._key_monitor = None             # NSEvent 全局热键监听(回退)
+        self._carbon_hotkey = None           # Carbon 热键(优先)
+        self._hotkey_mode = None             # 'carbon' | 'appkit'
         self._should_stop = False            # 手动 event loop 停止标志
 
     # ---------- UI 更新（任意线程可调用） ----------
@@ -236,25 +238,38 @@ class MacOverlay:
             if self._should_stop:
                 break
             try:
-                # untilDate 需为 NSDate（pyobjc 不会自动把 float 转 NSDate）
-                until = AppKit.NSDate.date()  # 立即返回（非阻塞），配合 poll
+                # untilDate 用未来 0.1s 的 NSDate，让 nextEventMatchingMask 内部等待，
+                # 比 NSDate.date()+sleep 轮询更省 CPU；Ctrl+C 仍可中断
+                until = AppKit.NSDate.dateWithTimeIntervalSinceNow_(0.1)
                 ev = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
                     AppKit.NSEventMaskAny, until, NSDefaultRunLoopMode, True)
             except KeyboardInterrupt:
                 break
             if ev is not None:
                 app.sendEvent_(ev)
-            time.sleep(0.005)  # 小睡，避免忙轮询
 
     def _register_hotkey(self):
-        """全局热键（需辅助功能权限，游戏前台也能收到）：
-        F9/Fn+F9 隐藏显示；F10/Fn+F10 切换鼠标穿透。
-        实测 keyCode：F9=101, F10=109。用 global monitor（app 外也触发）。
-        """
-        from AppKit import NSEvent, NSKeyDownMask
-        F9 = 101
-        F10 = 109
+        """注册全局热键（F9 隐藏/显示，F10 切换鼠标穿透）。
 
+        优先用 Carbon RegisterEventHotKey（不依赖辅助功能权限、全局生效）；
+        失败时回退 AppKit addGlobalMonitor（需辅助功能权限）。
+        """
+        try:
+            from dota_assistant.overlay.carbon_hotkey import CarbonHotkey
+            hk = CarbonHotkey()
+            hk.set_callback(self._on_hotkey)
+            ok9 = hk.register(101, "F9")    # F9
+            ok10 = hk.register(109, "F10")  # F10
+            if ok9 or ok10:
+                hk.install()
+                self._carbon_hotkey = hk
+                self._hotkey_mode = "carbon"
+                return
+        except Exception:
+            pass
+        # 回退：AppKit global monitor
+        from AppKit import NSEvent, NSKeyDownMask
+        F9, F10 = 101, 109
         def handler(ev):
             try:
                 kc = ev.keyCode()
@@ -267,10 +282,20 @@ class MacOverlay:
                     self._main(_do)
             except Exception:
                 pass
-            return None  # 全局 monitor 需返回 None 以放行事件
-
+            return None
         self._key_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             NSKeyDownMask, handler)
+        self._hotkey_mode = "appkit"
+
+    def _on_hotkey(self, name: str):
+        """Carbon 热键回调（在安装后的事件循环里触发）。"""
+        def _do():
+            if name == "F9":
+                self.toggle_visible()
+            elif name == "F10":
+                state = self.toggle_mouse_passthrough()
+                self._set_status_text("鼠标穿透" if state else "鼠标可点击")
+        self._main(_do)
 
     def toggle_visible(self):
         """F9：隐藏/显示浮窗。"""

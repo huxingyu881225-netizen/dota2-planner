@@ -104,9 +104,9 @@ def generate_strategy_batch(
                 "temperature": 0.4,
                 "max_tokens": int(os.environ.get("DOTA_LLM_MAX_TOKENS", "1000")),
             }
-            reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT")
-            if reasoning_effort:
-                payload["reasoning_effort"] = reasoning_effort
+            # 默认 high（用户要求）；可用 DOTA_LLM_REASONING_EFFORT 覆盖 (low/medium/high)
+            reasoning_effort = os.environ.get("DOTA_LLM_REASONING_EFFORT", "high")
+            payload["reasoning_effort"] = reasoning_effort
             resp = requests.post(url, json=payload, headers=headers, timeout=int(os.environ.get("DOTA_LLM_TIMEOUT", "30")))
             resp.raise_for_status()
             text = (resp.json()["choices"][0]["message"]["content"] or "").strip()

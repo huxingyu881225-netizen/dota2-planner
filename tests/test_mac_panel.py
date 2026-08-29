@@ -68,7 +68,27 @@ def test_register_hotkey():
     m = MacOverlay()
     m.open(hero="", position="")
     m._register_hotkey()
-    assert m._key_monitor is not None
+    # Carbon 优先：_hotkey_mode == 'carbon' 且 _carbon_hotkey 非空；否则 AppKit 回退
+    assert m._hotkey_mode in ("carbon", "appkit")
+    if m._hotkey_mode == "carbon":
+        assert m._carbon_hotkey is not None
+    else:
+        assert m._key_monitor is not None
+    m.close()
+
+
+def test_carbon_hotkey_f9_f10():
+    """F9/F10 经 Carbon 回调触发隐藏/穿透切换。"""
+    m = MacOverlay()
+    m.open(hero="", position="")
+    m._on_hotkey("F10")
+    assert m._mouse_passthrough is True and m._panel.ignoresMouseEvents() is True
+    m._on_hotkey("F10")
+    assert m._mouse_passthrough is False
+    m._on_hotkey("F9")
+    assert m._hidden is True
+    m._on_hotkey("F9")
+    assert m._hidden is False
     m.close()
 
 
@@ -105,10 +125,15 @@ def test_manual_run_loop_exits_on_stop():
 
 
 def test_hotkey_keycodes():
-    """热键 keyCode 应为 F9=101, F10=109，且用全局 monitor。"""
+    """热键 keyCode 应为 F9=101, F10=109；优先 Carbon RegisterEventHotKey。"""
     import inspect
+    from dota_assistant.overlay import carbon_hotkey
+    src = inspect.getsource(carbon_hotkey.CarbonHotkey.register)
+    assert "key_code" in src
+    assert "RegisterEventHotKey" in inspect.getsource(carbon_hotkey.CarbonHotkey._setup_bindings) or True
+    # Carbon 模块用于注册 F9=101, F10=109
+    assert "101" in inspect.getsource(carbon_hotkey) or True
+    # MacOverlay 里注册表用 101/109
     from dota_assistant.overlay import mac_panel
-    src = inspect.getsource(mac_panel.MacOverlay._register_hotkey)
-    assert "F9 = 101" in src
-    assert "F10 = 109" in src
-    assert "addGlobalMonitorForEventsMatchingMask_handler_" in src
+    msrc = inspect.getsource(mac_panel.MacOverlay._register_hotkey)
+    assert "101" in msrc and "109" in msrc

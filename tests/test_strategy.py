@@ -113,3 +113,20 @@ def test_system_prompt_has_structure_and_constraints():
     assert "offlane_support" in SYSTEM_PROMPT and "劣势路辅助/四号位" in SYSTEM_PROMPT
     assert "直接输出 advice 文本" in SYSTEM_PROMPT
     assert "一到三句中文" in SYSTEM_PROMPT
+
+
+def test_reasoning_effort_default_high(monkeypatch):
+    """reasoning_effort 默认 high（未设环境变量也进 payload）。"""
+    monkeypatch.setenv("DOTA_LLM_API_KEY", "k")
+    monkeypatch.delenv("DOTA_LLM_REASONING_EFFORT", raising=False)
+    captured = {}
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "x"}}]}
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["body"] = json
+        return R()
+    monkeypatch.setattr("dota_assistant.llm.strategy.requests.post", fake_post)
+    from dota_assistant.llm.strategy import generate_strategy_batch
+    generate_strategy_batch([WIN], "juggernaut", "carry")
+    assert captured["body"].get("reasoning_effort") == "high"

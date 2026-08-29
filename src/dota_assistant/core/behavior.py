@@ -64,9 +64,18 @@ def build(metrics: dict[str, Any], _position: str) -> str:
     if d := metrics.get("deaths", 0):
         parts.append(f"D {d}")
 
-    items = metrics.get("items_bought") or []
-    if items:
-        parts.append("购买:" + ",".join(str(i) for i in items))
+    # 起始装：前 1 分钟逐项列出
+    starting = metrics.get("starting_items") or []
+    if starting:
+        parts.append("起始装:" + ",".join(str(i) for i in starting))
+    # 本窗口新增购买
+    in_window = metrics.get("items_bought_in_window") or metrics.get("items_bought") or []
+    if in_window:
+        parts.append("本窗口新增购买:" + ",".join(str(i) for i in in_window))
+    # 累计已购
+    so_far = metrics.get("items_bought_so_far") or []
+    if so_far:
+        parts.append("已购:" + ",".join(str(i) for i in so_far))
 
     obs = int(metrics.get("obs_bought", 0) or 0)
     sen = int(metrics.get("sen_bought", 0) or 0)

@@ -129,3 +129,18 @@ def test_no_final_assists_in_metrics():
     for w in wins:
         assert "assists" not in w, f"t={w['t_sec']} 不应有整局 assists: {w}"
         assert "assists_in_window" not in w
+
+
+def test_behavior_fallback_includes_starting_items():
+    """fallback(behavior.build) 要输出起始装/窗口新增/累计已购。"""
+    from dota_assistant.core.behavior import build
+    text = build({
+        "t_sec": 30,
+        "starting_items": ["tango", "magic stick"],
+        "items_bought_in_window": ["boots"],
+        "items_bought_so_far": ["tango", "magic stick", "boots"],
+        "cs": 10, "gpm": 500,
+    }, "carry")
+    assert "起始装:tango,magic stick" in text
+    assert "本窗口新增购买:boots" in text
+    assert "已购:tango,magic stick,boots" in text

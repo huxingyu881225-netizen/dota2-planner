@@ -63,6 +63,7 @@ def cmd_demo(args):
 
 
 def cmd_coach(args):
+    import threading
     from dota_assistant.overlay.coach import Coach, SessionClock, GsiGameClock
     from dota_assistant.overlay.gsi import GsiServer, GsiState
     from dota_assistant.overlay.term import TermDisplay
@@ -74,6 +75,7 @@ def cmd_coach(args):
         try:
             from dota_assistant.overlay.mac_panel import MacOverlay
             display = MacOverlay()
+            # 必须在主线程建窗口（cmd_coach 运行在主线程，这里 OK）
             display.open(hero=args.hero or "", position=args.position or "")
             print("浮窗已打开（英雄由 GSI 感知，位置在浮窗选择）…")
         except Exception as e:
@@ -99,20 +101,39 @@ def cmd_coach(args):
     init_schema(conn)
     clock = GsiGameClock(gsi_state) if use_gsi_clock else SessionClock()
 
-    # hero/position 可选：hero 可由 GSI 感知；position 由 coach 按库中选择
     coach = Coach(Repo(conn), display, clock=clock, gsi_state=gsi_state if use_gsi_clock else None)
     hero_arg = getattr(args, "hero", None) or None
     pos_arg = normalize_position(args.position) if args.position else None
     print(f"开始教练模式（英雄: GSI自动识别/{hero_arg or '无'}，位置: {pos_arg or '自动选择'}），"
           f"前{args.minutes}分钟，每{args.interval}秒。仅当英雄/位置在库中有建议才提。Ctrl+C 退出。")
-    try:
-        coach.run(hero=hero_arg, position=pos_arg,
-                  minute_n=args.minutes, interval_m=args.interval)
-    finally:
-        if display is not None and hasattr(display, "close"):
-            display.close()
-        if gsi_server is not None:
-            gsi_server.stop()
+
+    def _run_coach():
+        try:
+            coach.run(hero=hero_arg, position=pos_arg,
+                      minute_n=args.minutes, interval_m=args.interval)
+        finally:
+            if use_gui:
+                # coach 结束 -> 退出 AppKit 事件循环
+                display.stop_app() if hasattr(display, "stop_app") else None
+
+    if use_gui:
+        # GUI：coach 放后台线程，主线程跑 AppKit 事件循环（窗口才显示/响应）
+        t = threading.Thread(target=_run_coach, daemon=True)
+        t.start()
+        try:
+            display.run()  # 阻塞直到 stop_app
+        except KeyboardInterrupt:
+            display.stop_app()
+    else:
+        # 终端模式：主线程直接跑
+        try:
+            _run_coach()
+        except KeyboardInterrupt:
+            pass
+    if display is not None and hasattr(display, "close"):
+        display.close()
+    if gsi_server is not None:
+        gsi_server.stop()
 
 
 def cmd_diff(args):

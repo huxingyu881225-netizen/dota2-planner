@@ -117,6 +117,10 @@ class Coach:
                 last_hint = self._hint(last_hint, "未感知到英雄（GSI 未上报），暂不提建议")
                 time.sleep(min(interval_m, 5))
                 continue
+            # 把 GSI 感知的英雄显示到浮窗
+            set_hero = getattr(self.display, "set_hero_from_gsi", None)
+            if set_hero is not None:
+                set_hero(cur_hero)
 
             # 若英雄尚未解析出位置，或 GSI 英雄与解析时不同，重新解析
             if resolved_pos is None or getattr(self, "_pos_hero", None) != cur_hero:

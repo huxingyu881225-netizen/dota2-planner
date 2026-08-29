@@ -1,90 +1,90 @@
 """macOS 浮窗（NSPanel, pyobjc），参考 dota-ai-coach。
 
-与 coach 的交互：
-- 英雄名：由 GSI 感知后自动显示在浮窗（只读，用户无需输入英雄）。
-- 位置：浮窗用下拉选择库里该英雄已有的位置。
-- 只有当 (英雄, 位置) 在 advice 库里有数据时，coach 才按游戏时间输出建议。
+架构：
+- 主线程跑 `NSApplication.run()`（AppKit 事件循环），窗口才能显示并响应事件。
+- coach 逻辑跑在后台线程，UI 更新通过 performSelectorOnMainThread 回主线程。
 
-若 pyobjc 不可用则抛错，由 CLI 降级到终端模式。
+交互：
+- 英雄名：由 GSI 感知后只读显示在浮窗（无需输入）。
+- 位置：浮窗下拉选择库里该英雄已有的位置。
+- 只有当 (英雄, 位置) 在 advice 库里有数据时，coach 才按游戏时间输出建议。
 """
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
-try:
-    import AppKit
-    _HAS_MAC = True
-except Exception:  # pragma: no cover
-    _HAS_MAC = False
+import objc
+import AppKit
+
+
+class _ButtonTarget(AppKit.NSObject):
+    """独立的 ObjC target，仅暴露按钮 action，避免与面板方法的 selector 冲突。"""
+
+    def initWithCallback_(self, cb: Callable[[], None]):
+        self = objc.super(_ButtonTarget, self).init()
+        if self is None:
+            return None
+        self._cb = cb
+        return self
+
+    @objc.selector
+    def startCoach_(self, sender):  # noqa: N802
+        try:
+            self._cb()
+        except Exception:
+            pass
 
 
 class MacOverlay:
+    """可输入位置的 macOS 置顶浮窗（普通 Python 类，UI 按钮用独立 ObjC target）。"""
+
     POSITIONS = ["carry", "mid", "offline", "offlane_support", "safelane_support"]
 
     def __init__(self):
-        if not _HAS_MAC:
-            raise RuntimeError("pyobjc-framework-Cocoa not available; use terminal mode")
         self._panel = None
         self._hero_label = None
         self._pos_popup = None
         self._advice_label = None
         self._clicked_start = threading.Event()
-        self._lock = threading.Lock()
+        self._button_target = None
 
-    # ---- 线程安全读取 GSI 英雄 & 位置选择 ----
+    # ---------- UI 更新（任意线程可调用） ----------
     def set_hero_from_gsi(self, hero: str):
-        """由 GSI 更新英雄显示（主线程调度）。"""
         if hero:
-            self._dispatch(lambda: self._hero_label.setStringValue_(hero) if self._hero_label else None)
+            self._main(lambda: self._set_hero_text(hero))
 
     def selected_position(self) -> Optional[str]:
-        if self._pos_popup is None:
-            return None
-        return self._pos_popup.titleOfSelectedItem()
+        return self._pos_popup.titleOfSelectedItem() if self._pos_popup else None
 
     def ask_position(self, hero: str, options: list[str]) -> Optional[str]:
         """让用户在浮窗下拉里选位置（阻塞直到选择）。返回所选或 None。"""
-        self._dispatch(lambda: self._load_positions(options))
+        self._main(lambda: self._load_positions(options))
         self._clicked_start.clear()
-        self._dispatch(lambda: self._set_status_text(f"英雄 {hero} 有多个位置，请选择并点击「开始」"))
+        self._main(lambda: self._set_status_text(f"英雄 {hero} 有多个位置，请选择后点「开始」"))
         self._clicked_start.wait(timeout=3600)
         return self.selected_position()
 
-    def _load_positions(self, options: list[str]):
-        if self._pos_popup is not None:
-            self._pos_popup.removeAllItems()
-            self._pos_popup.addItemsWithTitles_(options)
-
-    # ---- 显示 advice ----
     def show(self, minute: float, text: str):
         display = f"[{minute:04.1f}min] {text}"
-        self._dispatch(lambda: self._set_status_text(display))
+        self._main(lambda: self._set_status_text(display))
 
-    def _set_status_text(self, text: str):
-        if self._advice_label is not None:
-            self._advice_label.setStringValue_(text)
-        if self._panel is not None:
-            self._panel.display()
-
-    def _dispatch(self, fn):
-        if not _HAS_MAC:
-            return
-        try:
-            if threading.current_thread() is threading.main_thread():
-                fn()
-            else:
+    def _main(self, fn):
+        """调度到主线程执行：主线程直接调；子线程排入主 runloop(NSApp.run 在跑时执行)。"""
+        if threading.current_thread() is threading.main_thread():
+            fn()
+        else:
+            try:
                 AppKit.NSRunLoop.mainRunLoop().performBlock_(fn)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-    # ---- 面板构建 ----
+    # ---------- 面板构建（须在主线程调用） ----------
     def open(self, hero: str = "", position: str = ""):
         self._build(hero, position)
         return self
 
     def _build(self, hero: str, position: str):
-        import objc
         rect = AppKit.NSMakeRect(300, 400, 480, 230)
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, AppKit.NSWindowStyleMaskBorderless, AppKit.NSBackingStoreBuffered, False)
@@ -93,6 +93,9 @@ class MacOverlay:
         panel.setBackgroundColor_(AppKit.NSColor.clearColor())
         panel.setIgnoresMouseEvents_(False)
         panel.setReleasedWhenClosed_(False)
+        panel.setBecomesKeyOnlyIfNeeded_(True)
+        panel.setFloatingPanel_(True)
+        panel.setHidesOnDeactivate_(False)
         content = panel.contentView()
 
         bg = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 480, 230))
@@ -122,21 +125,25 @@ class MacOverlay:
         content.addSubview_(make_label(20, 166, 60, 24, "位置:"))
         popup = AppKit.NSPopUpButton.alloc().initWithFrame_(AppKit.NSMakeRect(80, 168, 160, 26))
         popup.removeAllItems()
-        popup.addItemsWithTitles_(self.POSITIONS if position not in self.POSITIONS else [position])
         if position in self.POSITIONS:
+            popup.addItemsWithTitles_(self.POSITIONS)
             popup.selectItemWithTitle_(position)
+        else:
+            popup.addItemsWithTitles_(self.POSITIONS)
         content.addSubview_(popup)
         self._pos_popup = popup
 
-        # 开始
+        # 开始按钮（用独立 ObjC target 触发事件）
         btn = AppKit.NSButton.alloc().initWithFrame_(AppKit.NSMakeRect(20, 120, 440, 40))
         btn.setTitle_("开始输出建议")
         btn.setBezelStyle_(AppKit.NSBezelStyleRounded)
-        btn.setTarget_(self)
+        target = _ButtonTarget.alloc().initWithCallback_(self._on_start)
+        btn.setTarget_(target)
         btn.setAction_("startCoach:")
         content.addSubview_(btn)
+        self._button_target = target
 
-        # 建议显示区
+        # 建议显示区（换行在 cell 上设置）
         advice = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(20, 10, 440, 100))
         advice.setStringValue_("等待…")
         advice.setTextColor_(AppKit.NSColor.whiteColor())
@@ -144,19 +151,47 @@ class MacOverlay:
         advice.setDrawsBackground_(False)
         advice.setBezeled_(False)
         advice.setEditable_(False)
+        advice.setSelectable_(False)
         advice.setFont_(AppKit.NSFont.systemFontOfSize_(16))
         advice.setUsesSingleLineMode_(False)
-        advice.setWraps_(True)
+        advice.cell().setWraps_(True)
+        advice.cell().setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+        advice.cell().setTruncatesLastVisibleLine_(False)
         content.addSubview_(advice)
         self._advice_label = advice
 
         self._panel = panel
-        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront_(None)
+        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
-    @objc.selector
-    def startCoach_(self, sender):  # noqa: N802
-        self._clicked_start.set()
+    # ---------- 事件循环 / 关闭 ----------
+    def run(self):
+        """阻塞运行 AppKit 事件循环（须在主线程调用）。"""
+        AppKit.NSApplication.sharedApplication().run()
+
+    def stop_app(self):
+        AppKit.NSApplication.sharedApplication().stop_(None)
 
     def close(self):
         if self._panel is not None:
             self._panel.orderOut_(None)
+
+    # ---------- 内部 ----------
+    def _on_start(self):
+        self._clicked_start.set()
+
+    def _set_hero_text(self, hero: str):
+        if self._hero_label is not None:
+            self._hero_label.setStringValue_(hero)
+            self._panel.display()
+
+    def _load_positions(self, options: list[str]):
+        if self._pos_popup is not None:
+            self._pos_popup.removeAllItems()
+            self._pos_popup.addItemsWithTitles_(options)
+
+    def _set_status_text(self, text: str):
+        if self._advice_label is not None:
+            self._advice_label.setStringValue_(text)
+        if self._panel is not None:
+            self._panel.display()

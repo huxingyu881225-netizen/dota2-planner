@@ -3,13 +3,14 @@
 每 M 秒查 DB 对应时间段的 advice 并显示（浮窗/终端）。
 
 核心逻辑：
-- 英雄名：GSI 实时感知（hero.info.name），同步到浮窗（去重）。
+- 英雄名：GSI 实时感知（hero.info.name），只要识别到就同步浮窗（去重）。
 - 位置：用户指定、或从库里该英雄已有 advice 的位置中选择；库里没有就直接提示。
 - 查询条件：只有当 (英雄, 位置) 在 advice 表里有数据时，才按游戏时间提建议。
-- 多局重置：检测到新 match（matchid/session 变化）时重置英雄/位置设置。
+- 多局切换：检测到新 match（matchid/session 变化）时重置英雄/位置设置。
+- 超过前 N 分钟：GSI 模式不退出，显示“已超过…等待下一局”；会话时钟模式到时退出。
 
 时钟来源：
-    1. GSI —— coach_time(优先 clock_time，回退 game_time)从游戏开始自动计时；coach_time<0 时返回 None。
+    1. GSI —— coach_time(优先 clock_time，回退 game_time)；coach_time<0 时返回 None。
     2. 回退 —— 会话计时器（未接 GSI 时用）。
 """
 from __future__ import annotations
@@ -36,7 +37,7 @@ class SessionClock(GameClock):
 
 
 class GsiGameClock(GameClock):
-    """GSI 时钟：coach_time(优先 clock_time)从游戏开始自动计时。
+    """GSI 时钟：coach_time(优先 clock_time) 从游戏开始自动计时。
 
     - 必须 fresh 且 in_game（GAME_IN_PROGRESS）
     - coach_time < 0（选人/策略阶段倒计时）时返回 None，避免提前吐 advice
@@ -90,16 +91,16 @@ class Coach:
         self._last_match_id = mid
         return changed
 
+    def _sync_hero_display(self, hero: Optional[str]):
+        """只要识别到英雄就同步到浮窗（去重由 display 内部做）。"""
+        if hero:
+            sync = getattr(self.display, "set_hero_from_gsi", None)
+            if sync is not None:
+                sync(hero)
+
     # ---- 位置解析 ----
     def _resolve_position(self, hero: str, requested: Optional[str],
                           force_confirm: bool = False) -> Optional[str]:
-        """解析位置：库里该英雄存在 advice 的位置。
-
-        - requested 指定且库里有 -> 用它
-        - 库里该英雄只有一个位置，且非强制确认 -> 自动用
-        - 多个位置，或 force_confirm（GUI 恒需用户确认）-> display.ask_position
-        - 库里没有 -> None
-        """
         options = self.repo.advice_positions_for_hero(hero)
         if requested:
             return requested if requested in options else None
@@ -120,12 +121,17 @@ class Coach:
             raise ValueError("minute_n 和 interval_m 必须为正数")
         last_shown: dict[str, str] = {}
         last_hint: Optional[str] = None
-
-        # 记录用户显式指定的位置（多局重置后回到这个默认）
         explicit_position = position
+        is_gsi_clock = isinstance(self.clock, GsiGameClock)
+        over_minute_notified = False
 
         while True:
             m = self.clock.minute()
+
+            # 无论是否开始，只要 GSI 识别到英雄就同步浮窗（策略/负时间阶段也能显示，避免一直"等待 GSI"）
+            pending_hero = self._hero(hero)
+            self._sync_hero_display(pending_hero)
+
             if m is None:
                 last_hint = self._hint(last_hint, "等待 Dota2 游戏开始… 请先开局（GSI 计时中）")
                 time.sleep(min(interval_m, 5))
@@ -136,18 +142,13 @@ class Coach:
                 self._resolved_pos = None
                 self._pos_hero = None
                 last_hint = None
+                over_minute_notified = False
 
-            # 当前英雄（GSI 实时）
-            cur_hero = self._hero(hero)
+            cur_hero = pending_hero
             if not cur_hero:
                 last_hint = self._hint(last_hint, "未感知到英雄（GSI 未上报），暂不提建议")
                 time.sleep(min(interval_m, 5))
                 continue
-
-            # 只要识别到英雄就同步到浮窗英雄标签（去重）
-            sync = getattr(self.display, "set_hero_from_gsi", None)
-            if sync is not None:
-                sync(cur_hero)
 
             # 位置：英雄变化或新一局时（重新）解析
             if self._resolved_pos is None or self._pos_hero != cur_hero:
@@ -162,9 +163,17 @@ class Coach:
                 time.sleep(min(interval_m, 5))
                 continue
 
-            # 库中存在 (hero, position) -> 按游戏时间提 advice
+            # 超过前 N 分钟
             if m > minute_n:
+                if is_gsi_clock:
+                    # GSI 模式：不退出，等待下一局（matchid 变化后会重置）
+                    if not over_minute_notified:
+                        self.display.show(m, f"已超过前 {minute_n} 分钟建议窗口，等待下一局继续…")
+                        over_minute_notified = True
+                    time.sleep(min(interval_m, 10))
+                    continue
                 break
+
             hits = self.repo.lookup_advice_at(cur_hero, self._resolved_pos, m)
             if hits:
                 txt = hits[0]["advice"]

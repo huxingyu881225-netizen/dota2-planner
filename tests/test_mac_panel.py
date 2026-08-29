@@ -82,3 +82,33 @@ def test_overlay_position_env(monkeypatch):
     f = m._panel.frame()
     assert int(f.origin.x) == 100 and int(f.origin.y) == 200
     m.close()
+
+
+def test_manual_run_loop_exits_on_stop():
+    """手动 event loop：_should_stop=True 时 run() 立即返回；stop_app 可打断。"""
+    m = MacOverlay()
+    m.open(hero="", position="")
+    m._should_stop = True
+    m.run()  # 应立即返回，不抛异常
+    m.close()
+
+    import time as _t
+    import threading as _th
+    m2 = MacOverlay()
+    m2.open(hero="", position="")
+    def stopper():
+        _t.sleep(0.1)
+        m2.stop_app()
+    _th.Thread(target=stopper, daemon=True).start()
+    m2.run()
+    m2.close()
+
+
+def test_hotkey_keycodes():
+    """热键 keyCode 应为 F9=101, F10=109，且用全局 monitor。"""
+    import inspect
+    from dota_assistant.overlay import mac_panel
+    src = inspect.getsource(mac_panel.MacOverlay._register_hotkey)
+    assert "F9 = 101" in src
+    assert "F10 = 109" in src
+    assert "addGlobalMonitorForEventsMatchingMask_handler_" in src

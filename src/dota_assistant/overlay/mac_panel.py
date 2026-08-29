@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable, Optional
 
 import objc
@@ -56,6 +57,7 @@ class MacOverlay:
         self._shown_hero = None              # 已显示过的英雄（去重）
         self._hidden = False                 # F9 隐藏状态
         self._key_monitor = None             # NSEvent 全局热键监听
+        self._should_stop = False            # 手动 event loop 停止标志
 
     # ---------- UI 更新（任意线程可调用） ----------
     def set_hero_from_gsi(self, hero: str):
@@ -221,15 +223,37 @@ class MacOverlay:
 
     # ---------- 事件循环 / 关闭 ----------
     def run(self):
-        """阻塞运行 AppKit 事件循环（须在主线程调用）。注册 F9 隐藏/显示热键。"""
+        """阻塞运行手动 AppKit 事件循环（须在主线程调用），Ctrl+C 可中断。
+
+        用 nextEventMatchingMask_untilDate_inMode_dequeue_ 手动拉事件，
+        避免 NSApp.run() 吞掉 KeyboardInterrupt 的问题。
+        参数顺序：mask, untilDate, inMode, dequeue。
+        """
         self._register_hotkey()
-        AppKit.NSApplication.sharedApplication().run()
+        app = AppKit.NSApplication.sharedApplication()
+        NSDefaultRunLoopMode = AppKit.NSDefaultRunLoopMode
+        while True:
+            if self._should_stop:
+                break
+            try:
+                # untilDate 需为 NSDate（pyobjc 不会自动把 float 转 NSDate）
+                until = AppKit.NSDate.date()  # 立即返回（非阻塞），配合 poll
+                ev = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
+                    AppKit.NSEventMaskAny, until, NSDefaultRunLoopMode, True)
+            except KeyboardInterrupt:
+                break
+            if ev is not None:
+                app.sendEvent_(ev)
+            time.sleep(0.005)  # 小睡，避免忙轮询
 
     def _register_hotkey(self):
-        """监听 F9/Fn+F9 隐藏显示；F10/Fn+F10 切换鼠标穿透。需辅助功能权限。"""
+        """全局热键（需辅助功能权限，游戏前台也能收到）：
+        F9/Fn+F9 隐藏显示；F10/Fn+F10 切换鼠标穿透。
+        实测 keyCode：F9=101, F10=109。用 global monitor（app 外也触发）。
+        """
         from AppKit import NSEvent, NSKeyDownMask
-        F9 = 97
-        F10 = 85
+        F9 = 101
+        F10 = 109
 
         def handler(ev):
             try:
@@ -243,9 +267,9 @@ class MacOverlay:
                     self._main(_do)
             except Exception:
                 pass
-            return ev
+            return None  # 全局 monitor 需返回 None 以放行事件
 
-        self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+        self._key_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             NSKeyDownMask, handler)
 
     def toggle_visible(self):
@@ -260,7 +284,12 @@ class MacOverlay:
             self._hidden = True
 
     def stop_app(self):
-        AppKit.NSApplication.sharedApplication().stop_(None)
+        """停止事件循环（手动 loop 置标志；NSApp.run 模式兜底 stop_）。"""
+        self._should_stop = True
+        try:
+            AppKit.NSApplication.sharedApplication().stop_(None)
+        except Exception:
+            pass
 
     def close(self):
         if self._panel is not None:

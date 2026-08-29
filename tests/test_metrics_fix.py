@@ -79,3 +79,53 @@ def test_metrics_has_xpm_key():
         if w["t_sec"] > 0:
             assert w["xpm"] == 6000
             assert w["xp"] == w["t_sec"] * 100  # xp 仍是累计值
+
+
+def test_starting_items_up_to_12():
+    """starting_items 最多取 12 件（覆盖开局岗哨守卫等）。"""
+    base = 5000
+    secs = 3 * 60
+    # 开局 2 秒内连买 9 件（含岗哨守卫）+ 后续
+    purchases = []
+    for i in range(9):
+        purchases.append(types.SimpleNamespace(tick=base + (1 + i) * 30, value_name=f"item_ward_{i}"))
+    purchases.append(types.SimpleNamespace(tick=base + 10 * 30, value_name="item_ward_sentry"))
+    purchases.append(types.SimpleNamespace(tick=base + 12 * 30, value_name="item_tango"))
+    purchases.append(types.SimpleNamespace(tick=base + 13 * 30, value_name="item_clarity"))
+    purchases.append(types.SimpleNamespace(tick=base + 60 * 30, value_name="item_boots"))
+    p = types.SimpleNamespace(
+        player_id=0, hero_name="npc_dota_hero_juggernaut",
+        times=[base + i * 30 for i in range(secs + 1)],
+        lh_t=[0.0] * (secs + 1), dn_t=[0.0] * (secs + 1),
+        gold_t=[600.0] * (secs + 1), total_earned_gold_t=[500.0] * (secs + 1),
+        net_worth_t=[1500.0] * (secs + 1), xp_t=[600.0] * (secs + 1),
+        total_deaths_t_min=[0] * 4, kills=0, deaths=0, assists=5,
+        kills_log=[], obs_log=[], sen_log=[], purchase_log=purchases, position_log=[],
+    )
+    wins = extract_windows({"player": p, "match": types.SimpleNamespace(game_start_tick=base), "players": None}, 2, 30)
+    # 前15秒：9件ward + sentry + tango + clarity = 12件（boots 在60s 不算）
+    start = wins[0]["starting_items"]
+    assert len(start) <= 12
+    assert "ward sentry" in start or any("sentry" in s for s in start), start
+    assert "boots" not in start
+    # 数量超过6（老实现会截断到6）
+    assert len(start) >= 9
+
+
+def test_no_final_assists_in_metrics():
+    """前期窗口 metrics 不含整局最终 assists，避免 LLM 误判。"""
+    base = 0
+    secs = 3 * 60
+    p = types.SimpleNamespace(
+        player_id=0, hero_name="npc_dota_hero_juggernaut",
+        times=[i * 30 for i in range(secs + 1)],
+        lh_t=[0.0] * (secs + 1), dn_t=[0.0] * (secs + 1),
+        gold_t=[600.0] * (secs + 1), total_earned_gold_t=[500.0] * (secs + 1),
+        net_worth_t=[1500.0] * (secs + 1), xp_t=[600.0] * (secs + 1),
+        total_deaths_t_min=[0] * 4, kills=9, deaths=9, assists=7,
+        kills_log=[], obs_log=[], sen_log=[], purchase_log=[], position_log=[],
+    )
+    wins = extract_windows({"player": p, "match": types.SimpleNamespace(game_start_tick=0), "players": None}, 2, 30)
+    for w in wins:
+        assert "assists" not in w, f"t={w['t_sec']} 不应有整局 assists: {w}"
+        assert "assists_in_window" not in w

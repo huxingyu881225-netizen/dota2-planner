@@ -44,7 +44,10 @@ class GsiGameClock(GameClock):
         self.state = state
 
     def minute(self) -> Optional[float]:
+        # 必须同时满足：GSI 数据新鲜 + 对局进行中（避免英雄选择阶段就吐 0:00 advice）
         if not self.state.fresh:
+            return None
+        if not self.state.in_game:
             return None
         return self.state.game_time / 60.0
 

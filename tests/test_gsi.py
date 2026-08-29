@@ -62,3 +62,18 @@ def test_gsi_server_receives_post():
         assert st.game_time / 60.0 == 4.0
     finally:
         srv.stop()
+
+
+def test_gsi_clock_requires_in_game():
+    """英雄选择阶段（非 GAME_IN_PROGRESS）即使 fresh 也不应吐时间。"""
+    st = GsiState()
+    # 英雄选择：game_time 可能是 0，fresh 且 in_game=False
+    st.update({"map": {"game_time": 0.0, "game_state": "DOTA_GAMERULES_STATE_HERO_SELECTION"},
+               "hero": {"info": {"name": "npc_dota_hero_pudge"}}, "player": {"team": 2}})
+    clock = GsiGameClock(st)
+    assert clock.minute() is None
+
+    # 对局进行中：返回分钟
+    st.update({"map": {"game_time": 120.0, "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+               "hero": {"info": {"name": "npc_dota_hero_pudge"}}, "player": {"team": 2}})
+    assert clock.minute() == 2.0

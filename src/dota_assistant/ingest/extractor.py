@@ -122,7 +122,7 @@ def _starting_items(purchase_entries, base_tick: int = 0, start_sec: int = 15) -
     """起始装：游戏开始 ~start_sec 秒内购买的前几件（按时间升序）。"""
     items = [name for tick, name in sorted(_purchase_items(purchase_entries), key=lambda x: x[0])
              if _to_sec(tick, base_tick) <= start_sec]
-    return items[:6]
+    return items[:12]
 
 
 def _items_so_far(purchase_entries, t_sec: int, base_tick: int = 0) -> list[str]:
@@ -186,7 +186,7 @@ def extract_windows(
     """按前 N 分钟、每 M 秒，输出每个窗口的结构化指标字典。
 
     每个窗口的 key：t_sec, t_min, window_interval, cs, gpm(=earned*60/t), xpm(=xp/(t/60)), networth,
-    gold, xp, dn, window_gain, kills_total, deaths, assists, kills_in_window,
+    gold, xp, dn, window_gain, kills_total, deaths(分钟累计), kills_in_window,
     obs_bought, sen_bought, items_bought[]（可选）, pos_x/pos_y（可选）。
     供 LLM 生成「核心策略」文本。
     """
@@ -202,7 +202,7 @@ def extract_windows(
     sen_log = list(getattr(player, "sen_log", None) or [])
     purchase_log = list(getattr(player, "purchase_log", None) or [])
     position_log = list(getattr(player, "position_log", None) or [])
-    assists = int(getattr(player, "assists", 0) or 0)
+
 
     windows: list[dict[str, Any]] = []
     t = 0
@@ -246,7 +246,6 @@ def extract_windows(
             "window_gain": _int(window_gain),
             "kills_total": int(getattr(player, "kills", 0) or 0),
             "deaths": int(cum_deaths),
-            "assists": assists,
             "deaths_cum_at_min": int(cum_deaths),
             "kills_in_window": _log_tick_seconds(kills_log, t - interval_m, t, base_tick),
             "obs_bought": _count_ward(obs_log, t, base_tick),

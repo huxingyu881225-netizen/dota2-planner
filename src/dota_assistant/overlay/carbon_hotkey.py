@@ -66,9 +66,17 @@ class CarbonHotkey:
             ctypes.c_void_p, ctypes.c_void_p,
         ]
         c.InstallEventHandler.restype = ctypes.c_int32
+        # OSStatus GetEventParameter(EventRef, EventParamName, EventParamType,
+        #                            EventParamType* outActualType, UInt32 inBufferSize,
+        #                            void* outData, UInt32* outActualSize)
         c.GetEventParameter.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
-            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
+            ctypes.c_void_p,    # inEvent
+            ctypes.c_uint32,    # inName ('----')
+            ctypes.c_uint32,    # inType ('hkid')
+            ctypes.c_void_p,    # outActualType (可 NULL)
+            ctypes.c_uint32,    # inBufferSize (UInt32)
+            ctypes.c_void_p,    # outData
+            ctypes.c_void_p,    # outActualSize (UInt32*)
         ]
         c.GetEventParameter.restype = ctypes.c_int32
         c.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
@@ -127,15 +135,15 @@ class CarbonHotkey:
             try:
                 # 从事件里取 EventHotKeyID（kEventParamDirectObject, typeEventHotKeyID）
                 hid = _EventHotKeyID()
-                size = ctypes.c_size_t(ctypes.sizeof(hid))
+                size = ctypes.c_uint32(ctypes.sizeof(hid))       # UInt32*
                 status = self._carbon.GetEventParameter(
-                    ctypes.c_void_p(eventref),
-                    ctypes.c_uint32(_kEventParamDirectObject),   # '----'
-                    ctypes.c_uint32(typeEventHotKeyID),          # 'hkid'
-                    None,
-                    ctypes.byref(hid),
-                    ctypes.sizeof(hid),
-                    ctypes.byref(size),
+                    ctypes.c_void_p(eventref),                   # inEvent
+                    ctypes.c_uint32(_kEventParamDirectObject),   # inName '----'
+                    ctypes.c_uint32(typeEventHotKeyID),          # inType 'hkid'
+                    None,                                        # outActualType
+                    ctypes.c_uint32(ctypes.sizeof(hid)),         # inBufferSize (UInt32)
+                    ctypes.byref(hid),                           # outData
+                    ctypes.byref(size),                          # outActualSize
                 )
                 if status == 0:
                     fn = self._callbacks.get(hid.id)

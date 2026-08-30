@@ -99,13 +99,22 @@ class MacOverlay:
         """让用户在浮窗下拉里选位置（阻塞直到选择）。返回所选或 None。
 
         等待期间恢复鼠标交互（setIgnoresMouseEvents_(False)），让用户能点下拉/开始按钮。
+        若用户之前已点过「开始」（如负时间阶段就选好点过），不再 clear/等待，
+        直接返回当前选中位置——避免到 00:00 后事件被 clear 掉、需要再点一次。
         """
         self._set_mouse_passthrough(False)  # 恢复交互
+        if self._clicked_start.is_set():
+            # 用户已确认过（负时间阶段点的开始），保留该确认，不重载下拉（避免重置选择）
+            return self.selected_position()
         self._main(lambda: self._load_positions(options))
         self._clicked_start.clear()
         self._main(lambda: self._set_status_text(f"英雄 {hero} 有多个位置，请选择后点「开始」"))
         self._clicked_start.wait(timeout=3600)
         return self.selected_position()
+
+    def reset_confirmation(self):
+        """新一局时重置位置确认状态（清掉上一局的开始事件）。"""
+        self._clicked_start.clear()
 
     def show(self, minute: float, text: str):
         display = f"[{minute:04.1f}min] {text}"

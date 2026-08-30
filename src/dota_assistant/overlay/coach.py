@@ -132,11 +132,6 @@ class Coach:
             pending_hero = self._hero(hero)
             self._sync_hero_display(pending_hero)
 
-            if m is None:
-                last_hint = self._hint(last_hint, "等待 Dota2 游戏开始… 请先开局（GSI 计时中）")
-                time.sleep(min(interval_m, 5))
-                continue
-
             # 多局切换：重置英雄/位置/已显示建议，回到初始状态，重新让用户确认
             if self._match_changed():
                 self._resolved_pos = None
@@ -144,6 +139,10 @@ class Coach:
                 last_hint = None
                 last_shown.clear()          # 清理已显示建议，避免新一局不刷新
                 over_minute_notified = False
+                # 清掉上一局的确认状态，新一局重新让用户确认位置
+                rc = getattr(self.display, "reset_confirmation", None)
+                if rc is not None:
+                    rc()
 
             cur_hero = pending_hero
             if not cur_hero:
@@ -151,11 +150,19 @@ class Coach:
                 time.sleep(min(interval_m, 5))
                 continue
 
-            # 位置：英雄变化或新一局时（重新）解析
+            # 位置：只要识别到英雄就解析（负时间/选人阶段就弹位置选择，用户可提前选好点开始，
+            # 避免等 game_time>=0 才提示、导致负时间点的开始事件被丢失）
             if self._resolved_pos is None or self._pos_hero != cur_hero:
                 self._resolved_pos = self._resolve_position(
                     cur_hero, explicit_position, force_confirm=force_position_confirm)
                 self._pos_hero = cur_hero
+
+            if m is None:
+                if self._resolved_pos is None:
+                    last_hint = self._hint(last_hint, "等待 Dota2 游戏开始… 请先开局（GSI 计时中）")
+                # 位置已确定（用户已在负时间选好）则无需反复提示
+                time.sleep(min(interval_m, 5))
+                continue
 
             if self._resolved_pos is None:
                 last_hint = self._hint(last_hint,

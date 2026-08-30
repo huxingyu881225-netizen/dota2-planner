@@ -137,3 +137,34 @@ def test_hotkey_keycodes():
     from dota_assistant.overlay import mac_panel
     msrc = inspect.getsource(mac_panel.MacOverlay._register_hotkey)
     assert "101" in msrc and "109" in msrc
+
+
+def test_carbon_constants_sdk_values():
+    """Carbon 常量按 macOS SDK：kEventClassKeyboard='keyb'(0x6b657962), typeEventHotKeyID='hkid'(0x686b6964)。"""
+    from dota_assistant.overlay import carbon_hotkey as c
+    assert c._kEventClassKeyboard == 0x6B657962
+    assert c.typeEventHotKeyID == 0x686B6964
+    assert c._kEventParamDirectObject == 0x2D2D2D2D
+    assert c._kEventHotKeyPressed == 5
+
+
+def test_ask_position_keeps_existing_click():
+    """负时间已点过开始（_clicked_start 已 set）-> ask_position 不等待直接返回当前选择。"""
+    m = MacOverlay()
+    m.open(hero="", position="")
+    m._clicked_start.set()          # 模拟负时间阶段用户已点「开始」
+    m._pos_popup.selectItemWithTitle_("mid")
+    sel = m.ask_position("juggernaut", ["carry", "mid"])
+    assert sel == "mid"             # 直接返回，没被 clear 也没阻塞
+    assert m._clicked_start.is_set()  # 事件保留
+    m.close()
+
+
+def test_reset_confirmation():
+    """reset_confirmation 清掉上一局确认，新一局重新等待。"""
+    m = MacOverlay()
+    m.open(hero="", position="")
+    m._clicked_start.set()
+    m.reset_confirmation()
+    assert not m._clicked_start.is_set()
+    m.close()

@@ -20,14 +20,13 @@ from typing import Callable, Optional
 
 _CARBON = "/System/Library/Frameworks/Carbon.framework/Carbon"
 
-# 常量
-_kEventClassKeyboard = 1
-_kEventHotKeyPressed = 5
-_kEventParamDirectObject = 1          # type 1 == '----'
-typeEventHotKeyID = 0x54685449        # 'HotK' 实际为 4 字符码; 这里用四字符 'HotK'
-_kEventHotKeyID = 0x484F544B          # 'HOTK'? 用官方: four-char-code 'HotK'
+# 常量（按 macOS SDK CarbonEvents.h 的准确值）
+_kEventClassKeyboard = 0x6B657962   # 'keyb' — kEventClassKeyboard
+_kEventHotKeyPressed = 5            # kEventHotKeyPressed
+_kEventParamDirectObject = 0x2D2D2D2D  # '----' — kEventParamDirectObject
+typeEventHotKeyID = 0x686B6964      # 'hkid' — typeEventHotKeyID（EventHotKeyID 参数类型）
+_kEventHotKeyID = typeEventHotKeyID # 别名
 
-# 简化：用官方数值
 # EventTypeSpec { class, kind }
 class _EventTypeSpec(ctypes.Structure):
     _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
@@ -131,8 +130,8 @@ class CarbonHotkey:
                 size = ctypes.c_size_t(ctypes.sizeof(hid))
                 status = self._carbon.GetEventParameter(
                     ctypes.c_void_p(eventref),
-                    ctypes.c_uint32(0x2D2D2D2D),  # '----' kEventParamDirectObject
-                    ctypes.c_uint32(0x484F544B),  # 'HOTK'? 官方 typeEventHotKeyID
+                    ctypes.c_uint32(_kEventParamDirectObject),   # '----'
+                    ctypes.c_uint32(typeEventHotKeyID),          # 'hkid'
                     None,
                     ctypes.byref(hid),
                     ctypes.sizeof(hid),

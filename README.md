@@ -14,7 +14,7 @@
 | 需求 | 命令 | 说明 |
 |------|------|------|
 | 1 灌录相行为入库 | `dota ingest pro.dem --hero H --position P [--minutes N --interval M] [--llm]` | 本地解析 .dem，把该英雄前 N 分钟、每 M 秒的 **核心策略**（LLM 或模板）写入 SQLite |
-| 2 浮窗实时给建议 | `dota coach [--hero H --position P] [--gui]` | 接 Dota2 GSI 从游戏开始自动计时，每 30 秒显示一条 30 秒窗口的 advice；浮窗可输入英雄/位置 |
+| 2 浮窗实时给建议 | `dota coach [--hero H --position P] [--gui] [--voice]` | 接 Dota2 GSI 从游戏开始自动计时，每 30 秒显示一条 30 秒窗口的 advice；浮窗可输入英雄/位置；`--voice` 用系统语音播报 advice |
 | 3 赛后对比+好坏判定 | `dota diff my.dem --hero H --position P [--result win\|loss]` | 对比本局行为与 DB 参考，指出偏差并判好坏；DB 无该英雄/位置则跳过 |
 | 4 编辑建议界面 | `dota serve` | 浏览器打开 `http://localhost:17373` 修改某英雄/位置/时间段的建议 |
 
@@ -91,6 +91,18 @@ dota coach --gui
   - **F10 / Fn+F10**：切换 鼠标可点击 ⇄ 鼠标穿透（穿透时不挡游戏操作）
 - 超过前 N 分钟：GSI 模式**不退出**，浮窗提示「已超过前 N 分钟建议窗口，等待下一局继续」，
   检测到新 `map.matchid` 后自动重置并重新开始；Ctrl+C 仍可随时退出（手动事件循环，不再被 NSApp.run 吞掉）。
+
+## 语音播报（--voice）
+
+```bash
+dota coach --voice --gui
+```
+
+- 命中**新的 advice** 时，除了浮窗/终端显示，还会用 macOS 自带 `/usr/bin/say` **读出来**（无新增依赖）。
+- 独立于浮窗可见性：即使按 F9 隐藏浮窗，也继续播报。
+- **只播真正的 advice**：等待游戏开始、未感知英雄、库中无数据等提示不播。
+- 异步播报，不阻塞 coach 主循环；新 advice 到来会**打断**还没播完的上一条。
+- 非 macOS 平台自动 no-op（预留扩展）。
 - 位置弹出：GUI 模式即使库里只有一个位置，也会在浮窗下拉里让你确认（多局切换后重新确认）。
   位置选择在**识别到英雄后立即弹出**（选人/负时间阶段就能选好并点「开始」），确认状态会保留到游戏开始，
   不会因为 00:00 边界被清掉、无需再点一次。

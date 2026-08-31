@@ -42,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--minutes", type=int, default=10)
     co.add_argument("--interval", type=int, default=30)
     co.add_argument("--gui", action="store_true", help="尝试 macOS 浮窗")
+    co.add_argument("--voice", action="store_true", help="命中新 advice 时用系统语音播报(macOS /usr/bin/say)")
     co.add_argument("--gsi-port", type=int, default=6000, help="GSI 监听端口(默认6000)")
     co.add_argument("--no-gsi", action="store_true", help="不启用 GSI，回退会话计时")
 

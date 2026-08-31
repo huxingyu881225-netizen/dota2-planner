@@ -58,7 +58,8 @@ class GsiGameClock(GameClock):
 
 
 class Coach:
-    def __init__(self, repo, display, clock: Optional[GameClock] = None, gsi_state: Optional[GsiState] = None):
+    def __init__(self, repo, display, clock: Optional[GameClock] = None, gsi_state: Optional[GsiState] = None,
+                 tts=None):
         self.repo = repo
         self.display = display
         if clock is not None:
@@ -68,6 +69,7 @@ class Coach:
         else:
             self.clock = SessionClock()
         self.gsi = gsi_state
+        self.tts = tts  # 可选：TtsSpeaker；命中新 advice 时语音播报，不阻塞
         self._last_match_id: Optional[str] = None
         self._pos_hero: Optional[str] = None
         self._resolved_pos: Optional[str] = None
@@ -187,7 +189,11 @@ class Coach:
                 txt = hits[0]["advice"]
                 key = m // interval_m
                 if last_shown.get(str(key)) != txt:
+                    # 只播报真正的 advice（等待/无英雄/库中无数据等提示不播）
                     self.display.show(m, f"【{hits[0]['t_start_min']}-{hits[0]['t_end_min']}min】{txt}")
+                    # 语音播报：独立于浮窗可见性（F9 隐藏也继续读）；异步不阻塞主循环
+                    if self.tts is not None:
+                        self.tts.speak(txt)
                     last_shown[str(key)] = txt
             else:
                 self.display.show(m, f"（{cur_hero}/{self._resolved_pos} 该时间段暂无建议窗口）")

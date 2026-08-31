@@ -107,16 +107,22 @@ def cmd_coach(args):
           f"前{args.minutes}分钟，每{args.interval}秒。仅当英雄/位置在库中有建议才提。Ctrl+C 退出。")
 
     def _run_coach():
+        from dota_assistant.overlay.tts import TtsSpeaker
         conn = connect()
         init_schema(conn)
         clock = GsiGameClock(gsi_state) if use_gsi_clock else SessionClock()
+        # --voice：macOS 用 /usr/bin/say 异步播报（非 mac 自动 no-op）
+        tts = TtsSpeaker() if getattr(args, "voice", False) else None
         coach = Coach(Repo(conn), display, clock=clock,
-                      gsi_state=gsi_state if use_gsi_clock else None)
+                      gsi_state=gsi_state if use_gsi_clock else None,
+                      tts=tts)
         try:
             coach.run(hero=hero_arg, position=pos_arg,
                       minute_n=args.minutes, interval_m=args.interval,
                       force_position_confirm=force_pos_confirm)
         finally:
+            if tts is not None:
+                tts.stop()
             conn.close()
             if use_gui:
                 # coach 结束 -> 退出 AppKit 事件循环

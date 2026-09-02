@@ -103,16 +103,18 @@ def test_strategy_prompt_position_chinese(monkeypatch):
 
 
 def test_system_prompt_has_structure_and_constraints():
-    """SYSTEM_PROMPT 包含两部分结构与关键约束。"""
+    """SYSTEM_PROMPT 含两部分结构与关键约束，且严禁复述例子状态/数据。"""
     from dota_assistant.llm.strategy import SYSTEM_PROMPT
-    assert "核心策略" in SYSTEM_PROMPT
     assert "装备/补给/视野建议" in SYSTEM_PROMPT
+    assert "战术指令" in SYSTEM_PROMPT
     assert "starting_items" in SYSTEM_PROMPT
-    assert "items_bought_in_window" in SYSTEM_PROMPT
-    assert "items_bought_so_far" in SYSTEM_PROMPT
     assert "offlane_support" in SYSTEM_PROMPT and "劣势路辅助/四号位" in SYSTEM_PROMPT
-    assert "直接输出 advice 文本" in SYSTEM_PROMPT
     assert "一到三句中文" in SYSTEM_PROMPT
+    assert "必须至少包含一个具体动作" in SYSTEM_PROMPT
+    # 禁止复述例子状态
+    assert "严禁复述" in SYSTEM_PROMPT
+    assert "本局9杀1死" in SYSTEM_PROMPT
+    assert "只输出行动" in SYSTEM_PROMPT or "输出只留结论" in SYSTEM_PROMPT
 
 
 def test_reasoning_effort_default_high(monkeypatch):
@@ -130,3 +132,29 @@ def test_reasoning_effort_default_high(monkeypatch):
     from dota_assistant.llm.strategy import generate_strategy_batch
     generate_strategy_batch([WIN], "juggernaut", "carry")
     assert captured["body"].get("reasoning_effort") == "high"
+
+
+def test_action_signal_strips_raw_numbers():
+    """_action_signal 去掉原始战况数字，只留定性行动信号。"""
+    from dota_assistant.llm.strategy import _action_signal
+    sig = _action_signal({
+        "t_sec": 150, "t_min": 2.5, "window_interval": 30,
+        "cs": 22, "gpm": 520, "networth": 3000, "gold": 400,
+        "xp": 1500, "dn": 3, "window_gain": 180,
+        "kills_total": 9, "deaths": 1, "assists": 3,
+        "kills_in_window": 1, "obs_bought": 2, "sen_bought": 1,
+        "starting_items": ["tango", "magic stick"],
+        "items_bought_so_far": ["tango", "magic stick", "boots"],
+        "items_bought_in_window": ["boots"],
+        "pos_x": 100.0, "pos_y": 200.0,
+    })
+    # 不应出现的原始状态字段
+    for k in ("kills_total", "deaths", "assists", "cs", "gpm", "networth", "gold", "xp", "dn", "window_gain", "kills_in_window"):
+        assert k not in sig, f"不应出现原始字段 {k}: {sig}"
+    # 应保留的定性/行动信号
+    assert sig.get("经济水平") == "中"          # gpm=520 -> 中
+    assert sig.get("起始装") == ["tango", "magic stick"]
+    assert sig.get("已有装备") == ["tango", "magic stick", "boots"]
+    assert sig.get("本窗口新增") == ["boots"]
+    assert sig.get("视野") == "有插眼动作"
+    assert sig.get("地图位置") == [100, 200]

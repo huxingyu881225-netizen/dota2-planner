@@ -52,6 +52,10 @@ dota ingest ./pro.dem --hero juggernaut --position carry --no-llm
 
 > 每个窗口的原始指标仍会随样本一起落库（`samples.extra`/各数值列），
 > 供赛后 diff（需求 3）对比用；`samples.behavior` 存的是 LLM 提炼出的核心策略文本。
+>
+> **advice 只输出可执行指令，不复述例子战况**：给 LLM 的只有定性信号（经济水平/已有装备/起始装/
+> 本窗口新增/视野/位置），**不含**"9杀1死""当前补刀"等例子录像的原始状态——advice 只建议出什么装备、
+> 攻击谁、去哪个位置帮忙（SYSTEM_PROMPT 明确禁止复述数据）。
 
 **赛后 diff 的好坏判定同样可用 LLM（可选）**：配置了 `DOTA_LLM_API_KEY` 时，
 `dota diff` 会把偏差列表交给 LLM，逐条给出「好/坏/中性 + 一句人话解释」；

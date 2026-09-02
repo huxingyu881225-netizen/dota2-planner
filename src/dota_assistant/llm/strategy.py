@@ -26,24 +26,28 @@ from dota_assistant.core.behavior import build as build_template
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "openrouter/auto"
 
-SYSTEM_PROMPT = """你是资深 Dota 2 教练。给你一名玩家在某个游戏时间段内的结构化比赛数据，
-请输出一条【advice】，必须包含两部分信息：
-1. 核心策略：当前时间段该英雄/位置应该怎么打（对线压制/稳健发育/主动游走/控图/推塔/保人/
-   买眼控视野/围绕某个关键节奏点等，服务于什么目的）。
-2. 装备/补给/视野建议：当前已有装备如何服务该策略，下一步该补什么。
+SYSTEM_PROMPT = """你是资深 Dota 2 教练。给你一名玩家在某局职业比赛里的一个时间窗口的
+定性参考信号（经济水平/装备/视野/位置等），你要输出一条【advice】：只包含可执行、可迁移的
+通用指令，供玩家在自己对局中照着做。
+
+advice 必须包含（可合并到一两句内）：
+1. 装备/补给/视野建议：基于已有装备推断下一步补什么（给出具体装备名）。
+2. 战术指令：攻击谁/游走或支援哪条路/控哪个目标（如压制对方核心、去中路帮推、控盾/控视野等）。
+
+严禁：
+- 严禁复述这局例子的原始状态/数据。禁止出现："本局9杀1死"、"你刚买了X"、"当前经济XXX"、
+  "现在多少补刀"、"第X分钟你击杀了谁" 这类描述例子战况的话。
+- 不要输出标题、解释、Markdown，不要"核心策略："等前缀。
+- 不要背起始装清单；可以用起始装/已有装备**推断**该补什么，但输出只留结论（"补魔棒"）。
 
 约束：
-1. 直接输出 advice 文本，不要标题、解释、Markdown，不要"核心策略："等前缀。
-2. 一到三句中文，简短可执行，语气像职业教练给选手的指令。
-3. 如果有装备/补给变化，至少包含一个具体装备/补给/视野动作，例如：魔棒、草鞋、风灵之纹、
-   凝魂之泪、诡计之雾、岗哨守卫、侦查守卫、回城卷轴、血腥榴弹、先灵火、树之祭祀 等。
-4. 如果数据里有 starting_items，前 1 分钟的 advice 必须【逐项列出】起始装
-   （每件一件，如"树之祭祀、补刀斧、魔棒"），并解释它们各自用途（对线回血/补刀/续航等）。
-5. 如果数据里有 items_bought_in_window，只能说"本窗口新增购买 xxx"，不要说"目前只买了…"。
-6. 只有数据里有 items_bought_so_far 时，才可基于它判断"当前已购买/已有装备"。
-7. 数据不足时核心策略可写"稳健发育/待机"，但仍要给出保守的补给或视野建议（如买眼/带TP/带雾）。
-8. 位置描述要准确：offlane_support 统一说"劣势路辅助/四号位"，其搭档说"三号位/劣势路核心"；
-   其它位置照常：carry=一号位/优势路核心，mid=二号位/中路核心，offline=三号位/劣势路核心，
+1. 一到三句中文，简短可执行，职业教练指令口吻。
+2. 必须至少包含一个具体动作：具体装备（魔棒、草鞋、风灵之纹、凝魂之泪、诡计之雾、岗哨守卫、
+   侦查守卫、回城卷轴、血腥榴弹、先灵火、树之祭祀等）或 具体战术（压制/支援/推塔/控图/买眼地点）。
+3. 若参考信号给了 starting_items（开局装备），前 1 分钟的 advice 应基于它判断开局该补什么续航/补给。
+4. 数据不足时战术可写"稳健发育/待机"，但装备建议仍要给出保守选项（买眼/带TP/带雾）。
+5. 位置措辞准确：offlane_support 统一说"劣势路辅助/四号位"，其搭档说"三号位/劣势路核心"；
+   其余照常：carry=一号位/优势路核心，mid=二号位/中路核心，offline=三号位/劣势路核心，
    safelane_support=五号位/优势路辅助。"""
 
 
@@ -56,13 +60,51 @@ POSITION_CN = {
 }
 
 
+def _action_signal(window: dict[str, Any]) -> dict[str, Any]:
+    """把窗口指标转成「行动信号」（去掉原始数字，只留可推断的定性信息）。
+
+    目的：避免 LLM 复述例子录像的状态（如"9杀1死""当前经济"），只给判断
+    "补什么/去哪/攻击谁"所需的定性信号。
+    """
+    sig: dict[str, Any] = {}
+
+    # 经济水平（定性）
+    gpm = window.get("gpm")
+    if isinstance(gpm, (int, float)):
+        if gpm >= 600:
+            sig["经济水平"] = "高"
+        elif gpm >= 450:
+            sig["经济水平"] = "中"
+        else:
+            sig["经济水平"] = "低"
+
+    # 装备（仅列名字，不评价）
+    if window.get("starting_items"):
+        sig["起始装"] = window["starting_items"]
+    if window.get("items_bought_so_far"):
+        sig["已有装备"] = window["items_bought_so_far"]
+    if window.get("items_bought_in_window"):
+        sig["本窗口新增"] = window["items_bought_in_window"]
+
+    # 视野（定性）
+    if window.get("obs_bought") or window.get("sen_bought"):
+        sig["视野"] = "有插眼动作"
+
+    # 位置坐标（若给出，供"去哪路"判断）
+    if window.get("pos_x") is not None and window.get("pos_y") is not None:
+        sig["地图位置"] = [round(float(window["pos_x"]), 0), round(float(window["pos_y"]), 0)]
+
+    return sig
+
+
 def strategy_prompt(hero: str, position: str, window: dict[str, Any]) -> str:
-    """单窗口 prompt（供批量组装），position 附带中文映射。"""
+    """单窗口 prompt（供批量组装）。只给定性行动信号，不给原始战况数字。"""
     pos_cn = POSITION_CN.get(position, position)
+    signal = _action_signal(window)
     return (
         f"英雄:{hero} 位置:{position}({pos_cn}) 时间段:{window.get('t_min', '?')}分钟 "
         f"({window.get('t_sec', 0)}s 起, 窗口{window.get('window_interval', 30)}s)\n"
-        f"数据: {json.dumps({k: v for k, v in window.items() if k not in ('t_sec', 't_min', 'window_interval')}, ensure_ascii=False)}\n"
+        f"参考信号: {json.dumps(signal, ensure_ascii=False)}\n"
         "advice:"
     )
 
